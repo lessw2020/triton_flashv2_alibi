@@ -6,6 +6,9 @@ This is a Triton implementation of the Flash Attention algorithm
 
 Sequence Parallel implementation inspired by HazyResearch
 (see https://github.com/HazyResearch/flash-attention/blob/main/flash_attn/flash_attn_triton.py)
+
+Mask support is based on the PR by JanEbert:
+https://github.com/openai/triton/pull/1935
 """
 
 import torch
@@ -232,12 +235,16 @@ def _bwd_kernel_one_col_block(
     q_ptrs = Q + (offs_qm[:, None] * stride_qm + offs_k[None, :] * stride_qk)
     k_ptrs = K + (offs_n[:, None] * stride_kn + offs_k[None, :] * stride_kk)
     v_ptrs = V + (offs_n[:, None] * stride_vn + offs_k[None, :] * stride_vk)
+    if HAS_MASK:
+        mask_ptrs = Mask + (
+            offs_qm[:, None] * stride_maskm + offs_n[None, :] * stride_maskn
+        )
     do_ptrs = DO + (offs_qm[:, None] * stride_qm + offs_k[None, :] * stride_qk)
     dq_ptrs = DQ + (offs_qm[:, None] * stride_qm + offs_k[None, :] * stride_qk)
     # pointer to row-wise quantities in value-like data
     D_ptrs = D + off_hz * N_CTX
     l_ptrs = L + off_hz * N_CTX
-    # initialize dv amd dk
+    # initialize dv and dk
     dv = tl.zeros([BLOCK_M, BLOCK_DMODEL], dtype=tl.float32)
     dk = tl.zeros([BLOCK_M, BLOCK_DMODEL], dtype=tl.float32)
     # k and v stay in SRAM throughout
@@ -250,6 +257,7 @@ def _bwd_kernel_one_col_block(
         q = tl.load(q_ptrs)
         # recompute p = softmax(qk, dim=-1).T
         # NOTE: `do` is pre-divided by `l`; no normalization here
+
         if CAUSAL:
             qk = tl.where(
                 offs_m_curr[:, None] >= (offs_n[None, :]), float(0.0), float("-inf")
@@ -258,6 +266,9 @@ def _bwd_kernel_one_col_block(
             qk = tl.zeros([BLOCK_M, BLOCK_N], dtype=tl.float32)
         qk += tl.dot(q, tl.trans(k))
         qk *= qk_scale
+        if HAS_MASK:
+            mask = tl.load(mask_ptrs)
+            qk += mask.to(qk.dtype)
         l_i = tl.load(l_ptrs + offs_m_curr)
         p = tl.math.exp2(qk - l_i[:, None])
         # compute dv
@@ -285,6 +296,8 @@ def _bwd_kernel_one_col_block(
         dq_ptrs += BLOCK_M * stride_qm
         q_ptrs += BLOCK_M * stride_qm
         do_ptrs += BLOCK_M * stride_qm
+        if HAS_MASK:
+            mask_ptrs += BLOCK_M * stride_maskm
     # write-back
     dv_ptrs = DV + (offs_n[:, None] * stride_vn + offs_k[None, :] * stride_vk)
     dk_ptrs = DK + (offs_n[:, None] * stride_kn + offs_k[None, :] * stride_kk)
@@ -296,6 +309,7 @@ def _bwd_kernel_one_col_block(
 def _bwd_kernel(
     # fmt: off
     Q, K, V, sm_scale,
+    Mask,
     Out, DO,
     DQ, DK, DV,
     L,
@@ -303,11 +317,13 @@ def _bwd_kernel(
     stride_dqa, stride_qz, stride_qh, stride_qm, stride_qk,
     stride_kz, stride_kh, stride_kn, stride_kk,
     stride_vz, stride_vh, stride_vn, stride_vk,
+    stride_maskz, stride_maskh, stride_maskm, stride_maskn,
     Z, H, N_CTX,
     BLOCK_M: tl.constexpr, BLOCK_DMODEL: tl.constexpr,
     BLOCK_N: tl.constexpr,
     SEQUENCE_PARALLEL: tl.constexpr,
     CAUSAL: tl.constexpr,
+    HAS_MASK: tl.constexpr,
     # fmt: on
 ):
     qk_scale = sm_scale * 1.44269504
@@ -318,6 +334,8 @@ def _bwd_kernel(
     Q += off_z * stride_qz + off_h * stride_qh
     K += off_z * stride_kz + off_h * stride_kh
     V += off_z * stride_vz + off_h * stride_vh
+    if HAS_MASK:
+        Mask += off_z * stride_maskz + off_h * stride_maskh
     DO += off_z * stride_qz + off_h * stride_qh
     DQ += off_z * stride_qz + off_h * stride_qh
     DK += off_z * stride_kz + off_h * stride_kh
@@ -332,6 +350,7 @@ def _bwd_kernel(
                 V,
                 sm_scale,
                 qk_scale,
+                Mask,
                 Out,
                 DO,
                 DQ,
@@ -352,6 +371,10 @@ def _bwd_kernel(
                 stride_vh,
                 stride_vn,
                 stride_vk,
+                stride_maskz,
+                stride_maskh,
+                stride_maskm,
+                stride_maskn,
                 Z,
                 H,
                 N_CTX,
@@ -363,6 +386,7 @@ def _bwd_kernel(
                 BLOCK_N=BLOCK_N,
                 SEQUENCE_PARALLEL=SEQUENCE_PARALLEL,
                 CAUSAL=CAUSAL,
+                HAS_MASK=HAS_MASK,
             )
     else:
         start_n = tl.program_id(1)
@@ -372,6 +396,7 @@ def _bwd_kernel(
             V,
             sm_scale,
             qk_scale,
+            Mask,
             Out,
             DO,
             DQ,
@@ -392,6 +417,10 @@ def _bwd_kernel(
             stride_vh,
             stride_vn,
             stride_vk,
+            stride_maskz,
+            stride_maskh,
+            stride_maskm,
+            stride_maskn,
             Z,
             H,
             N_CTX,
@@ -403,12 +432,13 @@ def _bwd_kernel(
             BLOCK_N=BLOCK_N,
             SEQUENCE_PARALLEL=SEQUENCE_PARALLEL,
             CAUSAL=CAUSAL,
+            HAS_MASK=HAS_MASK,
         )
 
 
 class _attention(torch.autograd.Function):
     @staticmethod
-    def forward(ctx, q, k, v, causal, sm_scale, sequence_parallel=False):
+    def forward(ctx, q, k, v, causal, sm_scale, mask=None, sequence_parallel=False):
         # only support for Ampere now
         capability = torch.cuda.get_device_capability()
         if capability[0] < 8:
@@ -427,11 +457,23 @@ class _attention(torch.autograd.Function):
             (q.shape[0] * q.shape[1], q.shape[2]), device=q.device, dtype=torch.float32
         )
         num_warps = 4 if Lk <= 64 else 8
+
+        has_mask = mask is not None
+        if has_mask:
+            assert isinstance(mask, torch.Tensor) and 1 <= mask.dim() <= 4
+            extra_dims = 4 - mask.dim()
+            mask = mask.reshape((1,) * extra_dims + mask.shape)
+            mask = mask.expand(q.shape[0], q.shape[1], q.shape[2], k.shape[2])
+            mask_strides = mask.stride()
+        else:
+            mask_strides = (None,) * 4
+
         _fwd_kernel[grid](
             q,
             k,
             v,
             sm_scale,
+            mask,
             L,
             o,
             q.stride(0),
@@ -446,6 +488,7 @@ class _attention(torch.autograd.Function):
             v.stride(1),
             v.stride(2),
             v.stride(3),
+            *mask_strides,
             o.stride(0),
             o.stride(1),
             o.stride(2),
@@ -457,6 +500,7 @@ class _attention(torch.autograd.Function):
             BLOCK_N=BLOCK_N,
             BLOCK_DMODEL=Lk,
             IS_CAUSAL=causal,
+            HAS_MASK=has_mask,
             num_warps=num_warps,
             num_stages=4,
         )
@@ -472,7 +516,7 @@ class _attention(torch.autograd.Function):
     @staticmethod
     def backward(ctx, do):
         BLOCK = 128
-        q, k, v, o, L = ctx.saved_tensors
+        q, k, v, mask, o, L = ctx.saved_tensors
         sequence_parallel = ctx.sequence_parallel
         seq_len_kv = k.shape[2]
         do = do.contiguous()
@@ -485,6 +529,13 @@ class _attention(torch.autograd.Function):
         dk = torch.empty_like(k)
         dv = torch.empty_like(v)
         delta = torch.empty_like(L)
+
+        has_mask = mask is not None
+        if has_mask:
+            mask_strides = mask.stride()
+        else:
+            mask_strides = (None,) * 4
+
         _bwd_preprocess[(cdiv(q.shape[2], BLOCK) * ctx.grid[1],)](
             o,
             do,
@@ -497,6 +548,7 @@ class _attention(torch.autograd.Function):
             k,
             v,
             ctx.sm_scale,
+            mask,
             o,
             do,
             dq,
@@ -517,6 +569,7 @@ class _attention(torch.autograd.Function):
             v.stride(1),
             v.stride(2),
             v.stride(3),
+            *mask_strides,
             q.shape[0],
             q.shape[1],
             q.shape[2],
@@ -525,6 +578,7 @@ class _attention(torch.autograd.Function):
             BLOCK_DMODEL=ctx.BLOCK_DMODEL,
             SEQUENCE_PARALLEL=sequence_parallel,
             CAUSAL=ctx.causal,
+            HAS_MASK=has_mask,
             num_warps=8,
             num_stages=1,
         )
