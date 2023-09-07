@@ -13,8 +13,10 @@ https://github.com/openai/triton/pull/1935
 
 import torch
 
-from .. import cdiv, jit
-from .. import language as tl
+# from .. import cdiv, jit
+# from .. import language as tl
+from triton import cdiv, jit
+from triton import language as tl
 
 
 @jit
@@ -436,7 +438,7 @@ def _bwd_kernel(
         )
 
 
-class _attention(torch.autograd.Function):
+class flash2mask_attention(torch.autograd.Function):
     @staticmethod
     def forward(ctx, q, k, v, causal, sm_scale, mask=None, sequence_parallel=False):
         # only support for Ampere now
