@@ -179,6 +179,7 @@ def _bwd_kernel_one_col_block(
     V,
     sm_scale,
     qk_scale,
+    Mask,
     Out,
     DO,
     DQ,
@@ -199,6 +200,10 @@ def _bwd_kernel_one_col_block(
     stride_vh,
     stride_vn,
     stride_vk,
+    stride_maskz,
+    stride_maskh,
+    stride_maskm,
+    stride_maskn,
     Z,
     H,
     N_CTX,
@@ -210,6 +215,7 @@ def _bwd_kernel_one_col_block(
     BLOCK_N: tl.constexpr,
     SEQUENCE_PARALLEL: tl.constexpr,
     CAUSAL: tl.constexpr,
+    HAS_MASK: tl.constexpr,
 ):
     if SEQUENCE_PARALLEL:
         DQ += stride_dqa.to(tl.int64) * start_n
