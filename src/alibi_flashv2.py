@@ -438,7 +438,7 @@ def _bwd_kernel(
         )
 
 
-class flash2mask_attention(torch.autograd.Function):
+class _attention(torch.autograd.Function):
     @staticmethod
     def forward(ctx, q, k, v, causal, sm_scale, mask=None, sequence_parallel=False):
         # only support for Ampere now
@@ -507,7 +507,7 @@ class flash2mask_attention(torch.autograd.Function):
             num_stages=4,
         )
 
-        ctx.save_for_backward(q, k, v, o, L)
+        ctx.save_for_backward(q, k, v, mask, o, L)
         ctx.grid = grid
         ctx.sm_scale = sm_scale
         ctx.BLOCK_DMODEL = Lk
@@ -590,4 +590,4 @@ class flash2mask_attention(torch.autograd.Function):
         return dq, dk, dv, None, None, None
 
 
-attention = _attention.apply
+flash2_alibi = _attention.apply
