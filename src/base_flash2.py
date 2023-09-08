@@ -20,6 +20,7 @@ def _fwd_kernel(
     K,
     V,
     sm_scale,
+    # Mask,
     L,
     Out,
     stride_qz,
@@ -45,6 +46,7 @@ def _fwd_kernel(
     BLOCK_DMODEL: tl.constexpr,
     BLOCK_N: tl.constexpr,
     IS_CAUSAL: tl.constexpr,
+    HAS_MASK: tl.constexpr,
 ):
     start_m = tl.program_id(0)
     off_hz = tl.program_id(1)
@@ -80,6 +82,9 @@ def _fwd_kernel(
     m_i = tl.zeros([BLOCK_M], dtype=tl.float32) - float("inf")
     l_i = tl.zeros([BLOCK_M], dtype=tl.float32)
     acc = tl.zeros([BLOCK_M, BLOCK_DMODEL], dtype=tl.float32)
+    if HAS_MASK:
+        pass
+
     # credits to: Adam P. Goucher (https://github.com/apgoucher):
     # scale sm_scale by 1/log_2(e) and use
     # 2^x instead of exp in the loop because CSE and LICM
@@ -101,6 +106,8 @@ def _fwd_kernel(
                 offs_m[:, None] >= (start_n + offs_n[None, :]), qk, float("-inf")
             )
         qk += tl.dot(q, k, allow_tf32=True)
+        if HAS_MASK:
+            pass
         # -- compute scaling constant ---
         m_i_new = tl.maximum(m_i, tl.max(qk, 1))
         alpha = tl.math.exp2(m_i - m_i_new)
@@ -115,6 +122,8 @@ def _fwd_kernel(
         # update pointers
         K_block_ptr = tl.advance(K_block_ptr, (0, BLOCK_N))
         V_block_ptr = tl.advance(V_block_ptr, (BLOCK_N, 0))
+        if HAS_MASK:
+            pass
     # write back l and m
     acc = acc / l_i[:, None]
     l_ptrs = L + off_hz * N_CTX + offs_m
@@ -188,6 +197,7 @@ def _bwd_kernel_one_col_block(
     BLOCK_N: tl.constexpr,
     SEQUENCE_PARALLEL: tl.constexpr,
     CAUSAL: tl.constexpr,
+    HAS_MASK: tl.constexpr,
 ):
     if SEQUENCE_PARALLEL:
         DQ += stride_dqa.to(tl.int64) * start_n
@@ -204,6 +214,8 @@ def _bwd_kernel_one_col_block(
     q_ptrs = Q + (offs_qm[:, None] * stride_qm + offs_k[None, :] * stride_qk)
     k_ptrs = K + (offs_n[:, None] * stride_kn + offs_k[None, :] * stride_kk)
     v_ptrs = V + (offs_n[:, None] * stride_vk + offs_k[None, :] * stride_vn)
+    if HAS_MASK:
+        pass
     do_ptrs = DO + (offs_qm[:, None] * stride_qm + offs_k[None, :] * stride_qk)
     dq_ptrs = DQ + (offs_qm[:, None] * stride_qm + offs_k[None, :] * stride_qk)
     # pointer to row-wise quantities in value-like data
@@ -230,6 +242,8 @@ def _bwd_kernel_one_col_block(
             qk = tl.zeros([BLOCK_M, BLOCK_N], dtype=tl.float32)
         qk += tl.dot(q, tl.trans(k))
         qk *= qk_scale
+        if HAS_MASK:
+            pass
         l_i = tl.load(l_ptrs + offs_m_curr)
         p = tl.math.exp2(qk - l_i[:, None])
         # compute dv
@@ -256,6 +270,8 @@ def _bwd_kernel_one_col_block(
         # increment pointers
         dq_ptrs += BLOCK_M * stride_qm
         q_ptrs += BLOCK_M * stride_qm
+        if HAS_MASK:
+            pass
         do_ptrs += BLOCK_M * stride_qm
     # write-back
     dv_ptrs = DV + (offs_n[:, None] * stride_vk + offs_k[None, :] * stride_vn)
@@ -280,6 +296,7 @@ def _bwd_kernel(
     BLOCK_N: tl.constexpr,
     SEQUENCE_PARALLEL: tl.constexpr,
     CAUSAL: tl.constexpr,
+    HAS_MASK: tl.constexpr,
     # fmt: on
 ):
     qk_scale = sm_scale * 1.44269504
@@ -290,6 +307,8 @@ def _bwd_kernel(
     Q += off_z * stride_qz + off_h * stride_qh
     K += off_z * stride_kz + off_h * stride_kh
     V += off_z * stride_vz + off_h * stride_vh
+    if HAS_MASK:
+        pass
     DO += off_z * stride_qz + off_h * stride_qh
     DQ += off_z * stride_qz + off_h * stride_qh
     DK += off_z * stride_kz + off_h * stride_kh
@@ -335,6 +354,7 @@ def _bwd_kernel(
                 BLOCK_N=BLOCK_N,
                 SEQUENCE_PARALLEL=SEQUENCE_PARALLEL,
                 CAUSAL=CAUSAL,
+                HAS_MASK=HAS_MASK,
             )
     else:
         start_n = tl.program_id(1)
@@ -375,12 +395,13 @@ def _bwd_kernel(
             BLOCK_N=BLOCK_N,
             SEQUENCE_PARALLEL=SEQUENCE_PARALLEL,
             CAUSAL=CAUSAL,
+            HAS_MASK=HAS_MASK,
         )
 
 
 class _attention(torch.autograd.Function):
     @staticmethod
-    def forward(ctx, q, k, v, causal, sm_scale, sequence_parallel=False):
+    def forward(ctx, q, k, v, causal, sm_scale, mask=None, sequence_parallel=False):
         # only support for Ampere now
         capability = torch.cuda.get_device_capability()
         if capability[0] < 8:
@@ -399,11 +420,15 @@ class _attention(torch.autograd.Function):
             (q.shape[0] * q.shape[1], q.shape[2]), device=q.device, dtype=torch.float32
         )
         num_warps = 4 if Lk <= 64 else 8
+        has_mask = mask is not None
+        if has_mask:
+            pass
         _fwd_kernel[grid](
             q,
             k,
             v,
             sm_scale,
+            # mask,
             L,
             o,
             q.stride(0),
@@ -429,6 +454,7 @@ class _attention(torch.autograd.Function):
             BLOCK_N=BLOCK_N,
             BLOCK_DMODEL=Lk,
             IS_CAUSAL=causal,
+            HAS_MASK=has_mask,
             num_warps=num_warps,
             num_stages=4,
         )
@@ -457,6 +483,9 @@ class _attention(torch.autograd.Function):
         dk = torch.empty_like(k)
         dv = torch.empty_like(v)
         delta = torch.empty_like(L)
+        has_mask = None  # mask is not None
+        if has_mask:
+            pass
         _bwd_preprocess[(ctx.grid[0] * ctx.grid[1],)](
             o,
             do,
@@ -497,6 +526,7 @@ class _attention(torch.autograd.Function):
             BLOCK_DMODEL=ctx.BLOCK_DMODEL,
             SEQUENCE_PARALLEL=sequence_parallel,
             CAUSAL=ctx.causal,
+            HAS_MASK=has_mask,
             num_warps=8,
             num_stages=1,
         )
