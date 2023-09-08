@@ -6,6 +6,7 @@ import triton
 import triton.ops
 
 from alibi_flashv2 import flash2_alibi
+from base_flash2 import attention as baseAttention
 
 
 def _banded_sq_matrix(size, value=1, device=None, dtype=None):
@@ -91,7 +92,8 @@ def test_op(Z, H, N_CTX, D_HEAD, dtype, causal, masked, seq_par):
     ref_dq, q.grad = q.grad.clone(), None
     # # triton implementation
     # tri_out = flash2_alibi(q, k, v, causal, sm_scale, M_triton, seq_par)
-    tri_out = triton.ops.attention(q, k, v, causal, sm_scale, seq_par)
+    # tri_out = triton.ops.attention(q, k, v, causal, sm_scale, seq_par)
+    tri_out = baseAttention(q, k, v, causal, sm_scale, seq_par)
     print(f"{ref_out.shape=}, {ref_out[0][0][0][0]=}")
     print(f" {tri_out.shape=}, {tri_out[0][0][0][0]=}")
     tri_out.backward(dout)
