@@ -10,8 +10,8 @@ Sequence Parallel implementation inspired by HazyResearch
 
 import torch
 
-from .. import cdiv, jit
-from .. import language as tl
+from triton import cdiv, jit
+from triton import language as tl
 
 
 @jit
