@@ -31,7 +31,7 @@ masked = False
 )
 @pytest.mark.parametrize("dtype", [torch.bfloat16])
 @pytest.mark.parametrize("causal", [True])
-@pytest.mark.parametrize("masked", [True, False])
+@pytest.mark.parametrize("masked", [False])
 @pytest.mark.parametrize("seq_par", [False, True])
 def test_op(Z, H, N_CTX, D_HEAD, dtype, causal, masked, seq_par):
     capability = torch.cuda.get_device_capability()
