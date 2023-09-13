@@ -8,12 +8,33 @@ import torch
 from triton import cdiv, jit
 from triton import language as tl
 
+_supported_head_dims = (16,32,64,128)
+
+'''
+    
+    
+    block_m: tl.constexpr,
+    block_dim_model: tl.constexpr,
+    # num_warps: tl.constexpr,
+    num_stages: tl.constexpr,
+    '''
 @jit
 def _fwd_kernel(
-    Q, K, V, Out
-):
+    Q: torch.tensor, 
+    K: torch.tensor, 
+    V: torch.tensor,
+    k_sqrt_scale_factor: torch.float, 
+    *,
+    Out: torch.tensor,
+    block_m: tl.constexpr,
+    block_dim_model: tl.constexpr,
+    
+
+    ):
     start_m = tl.program_id(0) # row offset(?)
     off_hz = tl.program_id(1) # batch offset
+
+
     
 class _newattention(torch.autograd.Function):
     @staticmethod
@@ -24,10 +45,30 @@ class _newattention(torch.autograd.Function):
         block_n = 64
 
         assert qlen == klen and klen == vlen
-        output = torch.empty_like(q)
+        assert klen in _supported_head_dims
 
-        grid = (cdiv(q.shape[2], ))
-        _fwd_kernel[grid](q, k, v)
+        block_dim_model = klen  # model dimensionality
+
+        output = torch.empty_like(q)
+        k_sqrt_scale_factor = klen**0.5  
+        # triton tuning
+        num_warps = 4 if klen <= 64 else 8
+        num_stages = 4
+
+
+        grid = (cdiv(q.shape[2], block_m ), q.shape[0] * q.shape[1],1)
+        print(f"{grid=}")
+
+        _fwd_kernel[grid](q, k, v, 
+                          k_sqrt_scale_factor,
+                          Out=output,
+                          block_m = block_m,
+                          block_dim_model = block_dim_model,
+                          # special params - absorbed by triton
+                          num_warps=num_warps,
+                          num_stages=num_stages,
+                          )
+        
 
         ctx.save_for_backward(q, k, v)
         return output
@@ -36,7 +77,9 @@ class _newattention(torch.autograd.Function):
     def backward(ctx, do):
         block = 128  
         print(f"in backward")
-        return None
+        # dummy vals
+        dq = dk = dv = torch.ones_like(do)
+        return dq, dk, dv, None
 
 new_flash2 = _newattention.apply
 
