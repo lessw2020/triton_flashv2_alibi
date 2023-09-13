@@ -23,7 +23,8 @@ def _fwd_kernel(
     Q: torch.tensor, 
     K: torch.tensor, 
     V: torch.tensor,
-    k_sqrt_scale_factor: torch.float, 
+    k_sqrt_scale_factor: torch.float,
+    softmax_normalizer: torch.tensor, 
     *,
     Out: torch.tensor,
     block_m: tl.constexpr,
@@ -55,13 +56,16 @@ class _newattention(torch.autograd.Function):
         num_warps = 4 if klen <= 64 else 8
         num_stages = 4
 
-
+        softmax_normalizer_meta = torch.empty((q.shape[0]*q.shape[1], q.shape[2]),device=q.device, dtype=torch.float32)
+        
+        print(f"{softmax_normalizer_meta.shape=}")
         grid = (cdiv(q.shape[2], block_m ), q.shape[0] * q.shape[1],1)
         print(f"{grid=}")
 
         _fwd_kernel[grid](q, k, v, 
                           k_sqrt_scale_factor,
                           Out=output,
+                          softmax_normalizer = softmax_normalizer_meta,
                           block_m = block_m,
                           block_dim_model = block_dim_model,
                           # special params - absorbed by triton
