@@ -151,7 +151,7 @@ def _fwd_kernel(
     
 class _newattention(torch.autograd.Function):
     @staticmethod
-    def forward(ctx, q, k, v, sm_scale, use_causal=True, use_mask = False):
+    def forward(ctx, q, k, v, sm_scale, use_causal=False, use_mask = False):
         qdim, kdim, vdim = q.shape[-1], k.shape[-1], v.shape[-1]
         print(f"{qdim=}")
         # confirm suitable qkv shapes
@@ -159,7 +159,7 @@ class _newattention(torch.autograd.Function):
         assert kdim in _supported_head_dims
 
         # currently support only mask or only causal (mask should include causal)
-        assert use_causal != use_mask, f"use causal {use_causal=} and {use_mask=} are mutually exclusive"
+        # assert use_causal != use_mask, f"use causal {use_causal=} and {use_mask=} are mutually exclusive"
 
         # block tuning
         block_m = 128
