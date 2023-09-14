@@ -45,7 +45,7 @@ def _fwd_kernel(
 
     Out: torch.tensor,
     num_heads: int,
-    seq_len: int,
+    seq_len: tl.constexpr,
     block_m: tl.constexpr,
     block_n: tl.constexpr,
     block_head_dim: tl.constexpr,
@@ -69,6 +69,27 @@ def _fwd_kernel(
         order=(1,0),
 
     )
+
+    k_bpr = tl.make_block_ptr(
+        base = k + qkv_offset,
+        shape = (block_head_dim, seq_len),
+        strides = (k_stride_hd, k_stride_sq),
+        offsets = (0,0),
+        block_shape=(block_head_dim, seq_len),
+        order=(0,1),
+
+    )
+
+    v_bpr = tl.make_block_ptr(
+        base = v + qkv_offset,
+        shape = (seq_len, block_head_dim),
+        strides = (v_stride_sq, v_stride_hd),
+        offsets = (0,0),
+        block_shape=(seq_len, block_head_dim),
+        order=(1,0),
+    )
+
+
 
 
 
