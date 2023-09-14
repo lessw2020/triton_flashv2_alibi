@@ -46,11 +46,11 @@ def _fwd_kernel(
 class _newattention(torch.autograd.Function):
     @staticmethod
     def forward(ctx, q, k, v, use_causal=True, use_mask = False):
-        qlen, klen, vlen = q.shape[-1], k.shape[-1], v.shape[-1]
-        print(f"{qlen=}")
+        qdim, kdim, vdim = q.shape[-1], k.shape[-1], v.shape[-1]
+        print(f"{qdim=}")
         # confirm suitable qkv shapes
-        assert qlen == klen and klen == vlen
-        assert klen in _supported_head_dims
+        assert qdim == kdim and kdim == vdim
+        assert kdim in _supported_head_dims
 
         # currently support only mask or only causal (mask should include causal)
         assert use_causal != use_mask, f"use causal {use_causal=} and {use_mask=} are mutually exclusive"
@@ -60,19 +60,16 @@ class _newattention(torch.autograd.Function):
         block_n = 64
         print(f"block sizes: {block_m=}, {block_n=}")
 
-        
-
-        block_dim_model = klen  # model dimensionality
-
         output = torch.empty_like(q)
-        k_sqrt_scale_factor = klen**0.5  
+
+        k_sqrt_scale_factor = kdim**0.5  
         # triton tuning
-        num_warps = 4 if klen <= 64 else 8
+        num_warps = 4 if kdim <= 64 else 8
         num_stages = 4
 
-        softmax_normalizer_meta = torch.empty((q.shape[0]*q.shape[1], q.shape[2]),device=q.device, dtype=torch.float32)
+        softmax_normalizer = torch.empty((q.shape[0]*q.shape[1], q.shape[2]),device=q.device, dtype=torch.float32)
         
-        print(f"{softmax_normalizer_meta.shape=}")
+        print(f"{softmax_normalizer.shape=}")
         grid = (cdiv(q.shape[2], block_m ), q.shape[0] * q.shape[1],1)
         print(f"{grid=}")
         num_heads, seq_len = q.shape[1], q.shape[2]
@@ -81,10 +78,10 @@ class _newattention(torch.autograd.Function):
         _fwd_kernel[grid](q, k, v, 
                           k_sqrt_scale_factor,
                           Out=output,
-                          softmax_normalizer = softmax_normalizer_meta,
+                          softmax_normalizer = softmax_normalizer,
                           block_m = block_m,
                           block_n = block_n,
-                          block_head_dim = klen,
+                          block_head_dim = kdim,
                           num_heads = num_heads, 
                           seq_len = seq_len,
                           use_causal=use_causal,
@@ -95,7 +92,7 @@ class _newattention(torch.autograd.Function):
                           )
         
 
-        ctx.save_for_backward(q, k, v)
+        ctx.save_for_backward(q, k, v, output, softmax_normalizer, )
         return output
     
     @staticmethod
