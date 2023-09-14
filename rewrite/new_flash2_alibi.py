@@ -153,10 +153,10 @@ class _newattention(torch.autograd.Function):
         # confirm suitable qkv shapes
         assert qdim == kdim and kdim == vdim
         assert kdim in _supported_head_dims
-
+        assert 4 == q.dim()
         # currently support only mask or only causal (mask should include causal)
         if use_causal:
-            assert use_causal != use_mask, f"use causal {use_causal=} and {use_mask=} are mutually exclusive"
+            assert use_causal != use_mask, f"causal {use_causal=} and {use_mask=} are mutually exclusive"
         elif use_mask:
             assert use_mask != use_causal, f"using casual and mask together is not yet supported"
             assert mask_in is not None, f" use_mask set but no mask supplied in mask_in param"
@@ -185,13 +185,24 @@ class _newattention(torch.autograd.Function):
         num_heads, seq_len = q.shape[1], q.shape[2]
         print(f"{num_heads=}, {seq_len=}")
 
+        # mask support
+        if use_mask and mask_in:
+            assert isinstance(mask_in, torch.tensor) and 1 <= mask_in.dim() <=4
+            extra_dims = 4  - mask.dim()
+            mask = mask.reshape((1,) * extra_dims + mask.shape)
+            q0, q1, q2, q3 = q.shape
+            mask = mask.expand(q0, q1, q2, k.shape[2])
+            mask_strides = mask.stride()
+        else:
+            mask_strides = (None,)*4
+
         _fwd_kernel[grid](q, k, v, 
                           output,
                           qk_scale_factor,
                           softmax_normalizer,
                           use_causal, #=use_causal,
                           use_mask, #=use_mask,
-                          mask_in, 
+                          mask_in, # alibi mask
                           # 4d strides,
                           q.stride(0), # batch
                           q.stride(1), # num heads
