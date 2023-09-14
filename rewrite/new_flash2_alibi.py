@@ -36,12 +36,15 @@ def _fwd_kernel(
     v_stride_h,
     v_stride_sq,
     v_stride_hd,
+    mask_stride_z,
+    mask_stride_h,
+    mask_stride_sq,
+    mask_stride_hd,
     o_stride_z,
     o_stride_h,
     o_stride_sq,
     o_stride_hd,
 
-    
     num_heads: int,
     seq_len: tl.constexpr,
     block_m: tl.constexpr,
@@ -186,10 +189,10 @@ class _newattention(torch.autograd.Function):
         print(f"{num_heads=}, {seq_len=}")
 
         # mask support
-        if use_mask and mask_in:
-            assert isinstance(mask_in, torch.tensor) and 1 <= mask_in.dim() <=4
-            extra_dims = 4  - mask.dim()
-            mask = mask.reshape((1,) * extra_dims + mask.shape)
+        if use_mask and mask_in is not None:
+            assert isinstance(mask_in, (torch.Tensor,)) and 1 <= mask_in.dim() <=4
+            extra_dims = 4  - mask_in.dim()
+            mask = mask_in.reshape((1,) * extra_dims + mask_in.shape)
             q0, q1, q2, q3 = q.shape
             mask = mask.expand(q0, q1, q2, k.shape[2])
             mask_strides = mask.stride()
@@ -202,7 +205,7 @@ class _newattention(torch.autograd.Function):
                           softmax_normalizer,
                           use_causal, #=use_causal,
                           use_mask, #=use_mask,
-                          mask_in, # alibi mask
+                          mask, # reshaped from mask_in, alibi mask
                           # 4d strides,
                           q.stride(0), # batch
                           q.stride(1), # num heads
@@ -216,6 +219,7 @@ class _newattention(torch.autograd.Function):
                           v.stride(1), # num heads
                           v.stride(2), # seq len
                           v.stride(3), # head dim
+                          *mask_strides,
                           output.stride(0), # batch
                           output.stride(1), # num heads
                           output.stride(2), # seq len
@@ -247,7 +251,7 @@ class _newattention(torch.autograd.Function):
         grid = ctx.grid
         # dummy vals
         dq = dk = dv = torch.ones_like(do)
-        return dq, dk, dv, None, None
+        return dq, dk, dv, None, None, None, None
 
 new_flash2 = _newattention.apply
 

@@ -33,24 +33,33 @@ def test_attention(batch, num_heads, seq_len, dim_head, dtype):
 
     dout = torch.randn_like(q)
 
-    use_causal = True
+    use_causal = False
+    use_mask = True
+
+    if use_mask:
+        mask = torch.ones((seq_len, seq_len), device=q.device, dtype=q.dtype)
+    else:
+        mask = None
 
     qk_scale = k.shape[-1]**0.5
     #sm_scale.to(torch.bfloat16)
     start = time.perf_counter()
     # params = q k v scaling use_causal
-    tri_out = attention(q,k,v,None, use_causal) # qk_scale)
+    tri_out = attention(q,k,v,None, use_causal, use_mask, mask) # qk_scale)
     stop = time.perf_counter()
     triton_time = round(stop-start, 4)
     print(f"triton compute time = {triton_time}")
-    base_out = orig_attn(q,k,v,use_causal, qk_scale)
+    # params: q,k,v,causal,sm_scale,
+        # mask: torch.Tensor = None,
+        # sequence_parallel=False,
+    base_out = orig_attn(q,k,v,use_causal, qk_scale, mask)
     
     print(f"{tri_out[0][0][0]=}")
     print(f"{base_out[0][0][0]=}")
     
     # --- sdpa -----
-    torch.backends.cuda.enable_mem_efficient_sdp(False)
-    sdpa_out = flash_sdpa(q,k,v,is_causal = use_causal, scale=qk_scale)
+    #torch.backends.cuda.enable_mem_efficient_sdp(False)
+    sdpa_out = flash_sdpa(q,k,v,attn_mask=mask, is_causal = use_causal, scale=qk_scale)
     print(f"{sdpa_out[0][0][0]=}")
 
 
