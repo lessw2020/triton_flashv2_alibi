@@ -25,6 +25,24 @@ def _fwd_kernel(
     V: torch.tensor,
     k_sqrt_scale_factor: torch.float,
     softmax_normalizer: torch.tensor, 
+    # strides
+    q_stride_z,
+    q_stride_h,
+    q_stride_sq,
+    q_stride_hd,
+    k_stride_z,
+    k_stride_h,
+    k_stride_sq,
+    k_stride_hd,
+    v_stride_z,
+    v_stride_h,
+    v_stride_sq,
+    v_stride_hd,
+    o_stride_z,
+    o_stride_h,
+    o_stride_sq,
+    o_stride_hd,
+
     *,
     Out: torch.tensor,
     num_heads: int,
@@ -77,8 +95,27 @@ class _newattention(torch.autograd.Function):
 
         _fwd_kernel[grid](q, k, v, 
                           k_sqrt_scale_factor,
-                          Out=output,
-                          softmax_normalizer = softmax_normalizer,
+                          output,
+                          softmax_normalizer,
+                          # 4d strides,
+                          q.stride(0), # batch
+                          q.stride(1), # num heads
+                          q.stride(2), # seq len
+                          q.stride(3), # head dim
+                          k.stride(0), # batch
+                          k.stride(1), # num heads
+                          k.stride(2), # seq len
+                          k.stride(3), # head dim
+                          v.stride(0), # batch
+                          v.stride(1), # num heads
+                          v.stride(2), # seq len
+                          v.stride(3), # head dim
+                          output.stride(0), # batch
+                          output.stride(1), # num heads
+                          output.stride(2), # seq len
+                          output.stride(3), # head dim
+
+                          
                           block_m = block_m,
                           block_n = block_n,
                           block_head_dim = kdim,
