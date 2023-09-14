@@ -20,9 +20,9 @@ _supported_head_dims = (16,32,64,128)
     '''
 @jit
 def _fwd_kernel(
-    q: torch.tensor, 
-    k: torch.tensor, 
-    v: torch.tensor,
+    q_in: torch.tensor, 
+    k_in: torch.tensor, 
+    v_in: torch.tensor,
     k_sqrt_scale_factor: torch.float,
     softmax_normalizer: torch.tensor, 
     # strides
@@ -61,7 +61,7 @@ def _fwd_kernel(
 
     # create block pointers
     q_bpr = tl.make_block_ptr(
-        base = q + qkv_offset,
+        base = q_in + qkv_offset,
         shape = (seq_len, block_head_dim),
         strides = (q_stride_sq, q_stride_hd),
         offsets = (start_m * block_m, 0),
@@ -71,7 +71,7 @@ def _fwd_kernel(
     )
 
     k_bpr = tl.make_block_ptr(
-        base = k + qkv_offset,
+        base = k_in + qkv_offset,
         shape = (block_head_dim, seq_len),
         strides = (k_stride_hd, k_stride_sq),
         offsets = (0,0),
@@ -81,7 +81,7 @@ def _fwd_kernel(
     )
 
     v_bpr = tl.make_block_ptr(
-        base = v + qkv_offset,
+        base = v_in + qkv_offset,
         shape = (seq_len, block_head_dim),
         strides = (v_stride_sq, v_stride_hd),
         offsets = (0,0),
@@ -97,7 +97,19 @@ def _fwd_kernel(
     normalizer_i = tl.zeros([block_m], dtype=tl.float32)
     accumulator = tl.zeros([block_m, block_head_dim], dtype=tl.float32)
 
+    # credit to: Adam P. Goucher ((https://github.com/apgoucher))
+    # scale sm_scale by 1/log_2(e) and use 2^x
+    qk_scale = k_sqrt_scale_factor * 1.44269504
+
+    # q will stay in sram
+    q = tl.load(q_bpr)
+    q = (q * qk_scale).to(k_in.dtype.element_ty)
+
+    low = 0
+    high = (start_m+1)* block_m if use_causal else seq_len
+
     
+
 
 
 
