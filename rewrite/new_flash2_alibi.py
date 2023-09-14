@@ -19,6 +19,9 @@ def _fwd_kernel(
     output_in: torch.tensor,
     qk_scale_factor: torch.float,
     softmax_normalizer: torch.tensor, 
+    use_causal: tl.constexpr,
+    use_mask: tl.constexpr, #: bool, 
+
     # strides
     q_stride_z,
     q_stride_h,
@@ -43,10 +46,7 @@ def _fwd_kernel(
     block_m: tl.constexpr,
     block_n: tl.constexpr,
     block_head_dim: tl.constexpr,
-    use_causal: tl.constexpr, #: bool,
-    use_mask: tl.constexpr, #: bool, 
-
-
+    
     ):
     start_m = tl.program_id(0) # row offset
     offset_heads = tl.program_id(1) # heads offset
@@ -108,6 +108,8 @@ def _fwd_kernel(
 
         # attn matrix calculation
         qk = tl.zeros([block_m, block_n], dtype=tl.float32)
+        if use_causal:
+            qk = tl.where(offsets_m[:,None]>= (start_n + offsets_n[None,:]), qk, float("-inf"))
         qk += tl.dot(q, k, allow_tf32=True)
         
 
@@ -182,6 +184,8 @@ class _newattention(torch.autograd.Function):
                           output,
                           qk_scale_factor,
                           softmax_normalizer,
+                          use_causal, #=use_causal,
+                          use_mask, #=use_mask,
                           # 4d strides,
                           q.stride(0), # batch
                           q.stride(1), # num heads
@@ -205,8 +209,7 @@ class _newattention(torch.autograd.Function):
                           block_head_dim = kdim,
                           num_heads = num_heads, 
                           seq_len = seq_len,
-                          use_causal=use_causal,
-                          use_mask=use_mask,
+                          
                           # special params - absorbed by triton
                           num_warps=num_warps,
                           num_stages=num_stages,
@@ -227,7 +230,7 @@ class _newattention(torch.autograd.Function):
         grid = ctx.grid
         # dummy vals
         dq = dk = dv = torch.ones_like(do)
-        return dq, dk, dv, None
+        return dq, dk, dv, None, None
 
 new_flash2 = _newattention.apply
 
