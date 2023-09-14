@@ -253,19 +253,50 @@ class _newattention(torch.autograd.Function):
                           num_stages=num_stages,
                           )
         
-
-        ctx.save_for_backward(q, k, v, output, softmax_normalizer, )
+        # save for backwards
+        ctx.save_for_backward(q, k, v, mask, output, softmax_normalizer, )
         ctx.grid = grid
-        ctx.softmax_normalizer = softmax_normalizer
+        ctx.qk_scaling = qk_scale_factor
         ctx.head_dim = kdim
         ctx.use_causal = use_causal
+        ctx.use_mask = use_mask
+
         return output
     
     @staticmethod
     def backward(ctx, do):
-        block = 128  
-        print(f"in backward")
+        block_size = 128 
+        print(f"in backward -- saved tensors:")
+        unpack = ctx.saved_tensors
+        # for item in unpack:
+        #     print(f"{item.shape=}")
+        '''item.shape=torch.Size([2, 64, 4096, 64])
+        item.shape=torch.Size([2, 64, 4096, 64])
+        item.shape=torch.Size([2, 64, 4096, 64])
+        item.shape=torch.Size([2, 64, 4096, 4096])
+        item.shape=torch.Size([2, 64, 4096, 64])
+        item.shape=torch.Size([128, 4096])
+        '''
+        q, k, v, mask, output, softmax_normalizer = unpack
+        
         grid = ctx.grid
+
+        # seq parallel TODO
+        seq_parallel=False
+        if seq_parallel:
+            raise ValueError("seq parallel not implemented yet")
+        else:
+            dq = torch.zeros_like(q, dtype=torch.float32)
+        dk = torch.empty_like(k)
+        dv = torch.empty_like(v)
+        delta = torch.empty_like(softmax_normalizer)
+
+        if mask is not None:
+            mask_strides = mask.stride()
+        else:
+            mask_strides = (None,)*4
+        
+
         # dummy vals
         dq = dk = dv = torch.ones_like(do)
         return dq, dk, dv, None, None, None, None
