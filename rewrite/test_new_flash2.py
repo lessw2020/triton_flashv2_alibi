@@ -37,4 +37,4 @@ def test_attention(batch, num_heads, seq_len, dim_head, dtype):
     tri_dv = v.grad.clone()
     tri_dk = k.grad.clone()
     tri_dq = q.grad.clone()
-    
+    print(f"{tri_dv=}")

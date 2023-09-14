@@ -28,7 +28,11 @@ def _fwd_kernel(
     *,
     Out: torch.tensor,
     block_m: tl.constexpr,
+    block_n: tl.constexpr,
     block_dim_model: tl.constexpr,
+    use_causal, #: bool,
+    use_mask, #: bool, 
+
     
 
     ):
@@ -39,14 +43,22 @@ def _fwd_kernel(
     
 class _newattention(torch.autograd.Function):
     @staticmethod
-    def forward(ctx, q, k, v):
+    def forward(ctx, q, k, v, use_causal=True, use_mask = False):
         qlen, klen, vlen = q.shape[-1], k.shape[-1], v.shape[-1]
         print(f"{qlen=}")
-        block_m = 128
-        block_n = 64
-
+        # confirm suitable qkv shapes
         assert qlen == klen and klen == vlen
         assert klen in _supported_head_dims
+
+        # currently support only mask or only causal (mask should include causal)
+        assert use_causal != use_mask, f"use causal {use_causal=} and {use_mask=} are mutually exclusive"
+
+        # block tuning
+        block_m = 128
+        block_n = 64
+        print(f"block sizes: {block_m=}, {block_n=}")
+
+        
 
         block_dim_model = klen  # model dimensionality
 
@@ -67,7 +79,10 @@ class _newattention(torch.autograd.Function):
                           Out=output,
                           softmax_normalizer = softmax_normalizer_meta,
                           block_m = block_m,
+                          block_n = block_n,
                           block_dim_model = block_dim_model,
+                          use_causal=use_causal,
+                          use_mask=use_mask,
                           # special params - absorbed by triton
                           num_warps=num_warps,
                           num_stages=num_stages,
