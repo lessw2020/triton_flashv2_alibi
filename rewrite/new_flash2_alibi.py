@@ -10,14 +10,6 @@ from triton import language as tl
 
 _supported_head_dims = (16,32,64,128)
 
-'''
-    
-    
-    block_m: tl.constexpr,
-    block_dim_model: tl.constexpr,
-    # num_warps: tl.constexpr,
-    num_stages: tl.constexpr,
-    '''
 @jit
 def _fwd_kernel(
     q_in: torch.tensor, 
@@ -100,11 +92,11 @@ def _fwd_kernel(
 
     # credit to: Adam P. Goucher ((https://github.com/apgoucher))
     # scale sm_scale by 1/log_2(e) and use 2^x
-    qk_scale = k_sqrt_scale_factor * 1.44269504
+    qk_scale = 0.5 # k_sqrt_scale_factor * 1.44269504
 
     # q will stay in sram
     q = tl.load(q_bpr)
-    q = (q * qk_scale).to(k_in.dtype.element_ty)
+    # q = (q * qk_scale).to(k_in.dtype.element_ty)
 
     low = 0
     high = (start_m+1)* block_m if use_causal else seq_len
@@ -116,6 +108,7 @@ def _fwd_kernel(
         # attn matrix calculation
         qk = tl.zeros([block_m, block_n], dtype=tl.float32)
         qk += tl.dot(q, k, allow_tf32=True)
+        # qk =qk*qk_scale
 
         # online softmax updates
         max_i_new = tl.maximum(max_i, tl.max(qk, 1))
@@ -145,6 +138,7 @@ def _fwd_kernel(
         block_shape=(block_m, block_head_dim),
         order=(1,0),
     )
+    tl.store(output_bpr, accumulator.to(k_in.dtype.element_ty))
 
 
 
@@ -157,7 +151,7 @@ def _fwd_kernel(
     
 class _newattention(torch.autograd.Function):
     @staticmethod
-    def forward(ctx, q, k, v, use_causal=True, use_mask = False):
+    def forward(ctx, q, k, v, sm_scale, use_causal=True, use_mask = False):
         qdim, kdim, vdim = q.shape[-1], k.shape[-1], v.shape[-1]
         print(f"{qdim=}")
         # confirm suitable qkv shapes
@@ -174,7 +168,7 @@ class _newattention(torch.autograd.Function):
 
         output = torch.empty_like(q)
 
-        k_sqrt_scale_factor = kdim**0.5  
+        k_sqrt_scale_factor = sm_scale # kdim**0.5  
         # triton tuning
         num_warps = 4 if kdim <= 64 else 8
         num_stages = 4
