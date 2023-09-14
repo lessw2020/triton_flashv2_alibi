@@ -164,6 +164,10 @@ def _fwd_kernel(
     )
     tl.store(output_bpr, accumulator.to(k_in.dtype.element_ty))
 
+@jit
+def bwd_preprocess(output, do):
+    pass
+
 
 class _newattention(torch.autograd.Function):
     @staticmethod
@@ -296,7 +300,13 @@ class _newattention(torch.autograd.Function):
         else:
             mask_strides = (None,)*4
         
+        seq_len = q.shape[2]
+        preprocess_grid = (cdiv(seq_len, block_size) * grid[1],)
 
+        bwd_preprocess[preprocess_grid](
+            output,
+            do,
+        )
         # dummy vals
         dq = dk = dv = torch.ones_like(do)
         return dq, dk, dv, None, None, None, None
