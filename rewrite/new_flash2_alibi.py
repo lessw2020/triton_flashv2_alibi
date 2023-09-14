@@ -87,6 +87,18 @@ def _fwd_kernel(
         order=(1,0),
     )
 
+    if use_mask:
+        mask_offset_z = offset_heads // num_heads
+        mask_offset_heads = offset_heads % num_heads
+        mask_bpr = tl.make_block_ptr(
+            base = mask_in + mask_offset_z * mask_stride_z + mask_offset_heads * mask_stride_h,
+            shape = (seq_len, seq_len),
+            strides = (mask_stride_sq, mask_stride_hd),
+            offsets=(start_m * block_m, 0),
+            block_shape=(block_m, block_n),
+            order=(1,0),
+        )
+
     offsets_m = start_m * block_m + tl.arange(0,block_m)
     offsets_n = tl.arange(0,block_n)
 
@@ -112,6 +124,9 @@ def _fwd_kernel(
 
         # attn matrix calculation
         qk = tl.zeros([block_m, block_n], dtype=tl.float32)
+        if use_mask:
+            mask = tl.load(mask_bpr)
+            qk += mask.to(qk.dtype)
         if use_causal:
             qk = tl.where(offsets_m[:,None]>= (start_n + offsets_n[None,:]), qk, float("-inf"))
         qk += tl.dot(q, k, allow_tf32=True)
@@ -132,6 +147,8 @@ def _fwd_kernel(
         # move pointers
         k_bpr = tl.advance(k_bpr, (0, block_n))
         v_bpr = tl.advance(v_bpr, (block_n, 0))
+        if use_mask:
+            mask_bpr = tl.advance(mask_bpr, (0,block_n))
 
     accumulator = accumulator / normalizer_i[:,None]
     normalizer_ptrs = softmax_normalizer + offset_heads * seq_len+ offsets_m
