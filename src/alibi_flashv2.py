@@ -48,9 +48,9 @@ def _fwd_kernel(
     stride_oh,
     stride_om,
     stride_on,
-    Z,
-    H,
-    N_CTX,
+    Z, # q0
+    H, # q1
+    N_CTX, # q2 
     BLOCK_M: tl.constexpr,
     BLOCK_DMODEL: tl.constexpr,
     BLOCK_N: tl.constexpr,

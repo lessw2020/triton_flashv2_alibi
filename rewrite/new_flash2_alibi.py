@@ -27,11 +27,13 @@ def _fwd_kernel(
     softmax_normalizer: torch.tensor, 
     *,
     Out: torch.tensor,
+    num_heads: int,
+    seq_len: int,
     block_m: tl.constexpr,
     block_n: tl.constexpr,
-    block_dim_model: tl.constexpr,
-    use_causal, #: bool,
-    use_mask, #: bool, 
+    block_head_dim: tl.constexpr,
+    use_causal: tl.constexpr, #: bool,
+    use_mask: tl.constexpr, #: bool, 
 
     
 
@@ -73,6 +75,8 @@ class _newattention(torch.autograd.Function):
         print(f"{softmax_normalizer_meta.shape=}")
         grid = (cdiv(q.shape[2], block_m ), q.shape[0] * q.shape[1],1)
         print(f"{grid=}")
+        num_heads, seq_len = q.shape[1], q.shape[2]
+        print(f"{num_heads=}, {seq_len=}")
 
         _fwd_kernel[grid](q, k, v, 
                           k_sqrt_scale_factor,
@@ -80,7 +84,9 @@ class _newattention(torch.autograd.Function):
                           softmax_normalizer = softmax_normalizer_meta,
                           block_m = block_m,
                           block_n = block_n,
-                          block_dim_model = block_dim_model,
+                          block_head_dim = klen,
+                          num_heads = num_heads, 
+                          seq_len = seq_len,
                           use_causal=use_causal,
                           use_mask=use_mask,
                           # special params - absorbed by triton
