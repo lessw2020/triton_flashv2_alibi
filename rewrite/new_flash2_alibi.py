@@ -20,9 +20,9 @@ _supported_head_dims = (16,32,64,128)
     '''
 @jit
 def _fwd_kernel(
-    Q: torch.tensor, 
-    K: torch.tensor, 
-    V: torch.tensor,
+    q: torch.tensor, 
+    k: torch.tensor, 
+    v: torch.tensor,
     k_sqrt_scale_factor: torch.float,
     softmax_normalizer: torch.tensor, 
     # strides
@@ -43,7 +43,6 @@ def _fwd_kernel(
     o_stride_sq,
     o_stride_hd,
 
-    *,
     Out: torch.tensor,
     num_heads: int,
     seq_len: int,
@@ -53,11 +52,24 @@ def _fwd_kernel(
     use_causal: tl.constexpr, #: bool,
     use_mask: tl.constexpr, #: bool, 
 
-    
 
     ):
     start_m = tl.program_id(0) # row offset(?)
-    off_hz = tl.program_id(1) # batch offset
+    offset_heads = tl.program_id(1) # heads offset
+
+    qkv_offset = offset_heads * q_stride_h
+
+    # create block pointers
+    q_bpr = tl.make_block_ptr(
+        base = q + qkv_offset,
+        shape = (seq_len, block_head_dim),
+        strides = (q_stride_sq, q_stride_hd),
+        offsets = (start_m * block_m, 0),
+        block_shape = (block_m, block_head_dim),
+        order=(1,0),
+
+    )
+
 
 
     
