@@ -47,7 +47,7 @@ def _fwd_kernel(
 
 
     ):
-    start_m = tl.program_id(0) # row offset(?)
+    start_m = tl.program_id(0) # row offset
     offset_heads = tl.program_id(1) # heads offset
 
     qkv_offset = offset_heads * q_stride_h
@@ -68,7 +68,7 @@ def _fwd_kernel(
         shape = (block_head_dim, seq_len),
         strides = (k_stride_hd, k_stride_sq),
         offsets = (0,0),
-        block_shape=(block_head_dim, seq_len),
+        block_shape=(block_head_dim, block_n),
         order=(0,1),
 
     )
