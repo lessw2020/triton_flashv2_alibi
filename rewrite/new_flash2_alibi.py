@@ -8,6 +8,7 @@ import torch
 from triton import cdiv, jit
 from triton import language as tl
 
+
 _supported_head_dims = (16,32,64,128)
 
 @jit
@@ -16,7 +17,7 @@ def _fwd_kernel(
     k_in: torch.tensor, 
     v_in: torch.tensor,
     output_in: torch.tensor,
-    k_sqrt_scale_factor: torch.float,
+    qk_scale_factor: torch.float,
     softmax_normalizer: torch.tensor, 
     # strides
     q_stride_z,
@@ -92,7 +93,7 @@ def _fwd_kernel(
 
     # credit to: Adam P. Goucher ((https://github.com/apgoucher))
     # scale sm_scale by 1/log_2(e) and use 2^x
-    qk_scale = k_sqrt_scale_factor * 1.44269504
+    qk_scale = qk_scale_factor * 1.44269504
 
     # q will stay in sram
     q = tl.load(q_bpr)
@@ -108,7 +109,7 @@ def _fwd_kernel(
         # attn matrix calculation
         qk = tl.zeros([block_m, block_n], dtype=tl.float32)
         qk += tl.dot(q, k, allow_tf32=True)
-        # qk =qk*qk_scale
+        
 
         # online softmax updates
         max_i_new = tl.maximum(max_i, tl.max(qk, 1))
@@ -151,7 +152,7 @@ def _fwd_kernel(
     
 class _newattention(torch.autograd.Function):
     @staticmethod
-    def forward(ctx, q, k, v, sm_scale, use_causal=False, use_mask = False):
+    def forward(ctx, q, k, v, qk_scaling=None, use_causal=False, use_mask = False):
         qdim, kdim, vdim = q.shape[-1], k.shape[-1], v.shape[-1]
         print(f"{qdim=}")
         # confirm suitable qkv shapes
@@ -162,13 +163,17 @@ class _newattention(torch.autograd.Function):
         # assert use_causal != use_mask, f"use causal {use_causal=} and {use_mask=} are mutually exclusive"
 
         # block tuning
-        block_m = 128
-        block_n = 64
+        block_m = 64 # 128 
+        block_n = 32 
         print(f"block sizes: {block_m=}, {block_n=}")
 
         output = torch.empty_like(q)
+        if qk_scaling is None:
+            qk_scale_factor = kdim**0.5  
+        else:
+            qk_scale_factor = qk_scaling
+        print(f"{qk_scale_factor=}")
 
-        k_sqrt_scale_factor = kdim**0.5  
         # triton tuning
         num_warps = 4 if kdim <= 64 else 8
         num_stages = 4
@@ -183,7 +188,7 @@ class _newattention(torch.autograd.Function):
 
         _fwd_kernel[grid](q, k, v, 
                           output,
-                          k_sqrt_scale_factor,
+                          qk_scale_factor,
                           softmax_normalizer,
                           # 4d strides,
                           q.stride(0), # batch
@@ -227,6 +232,7 @@ class _newattention(torch.autograd.Function):
     def backward(ctx, do):
         block = 128  
         print(f"in backward")
+        grid = ctx.grid
         # dummy vals
         dq = dk = dv = torch.ones_like(do)
         return dq, dk, dv, None
