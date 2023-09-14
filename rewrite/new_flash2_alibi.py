@@ -115,7 +115,6 @@ class _newattention(torch.autograd.Function):
                           output.stride(2), # seq len
                           output.stride(3), # head dim
 
-                          
                           block_m = block_m,
                           block_n = block_n,
                           block_head_dim = kdim,
@@ -130,6 +129,10 @@ class _newattention(torch.autograd.Function):
         
 
         ctx.save_for_backward(q, k, v, output, softmax_normalizer, )
+        ctx.grid = grid
+        ctx.softmax_normalizer = softmax_normalizer
+        ctx.head_dim = kdim
+        ctx.use_causal = use_causal
         return output
     
     @staticmethod
