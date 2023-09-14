@@ -142,14 +142,6 @@ def _fwd_kernel(
     tl.store(output_bpr, accumulator.to(k_in.dtype.element_ty))
 
 
-
-
-
-
-
-
-
-    
 class _newattention(torch.autograd.Function):
     @staticmethod
     def forward(ctx, q, k, v, qk_scaling=None, use_causal=False, use_mask = False):
@@ -163,8 +155,8 @@ class _newattention(torch.autograd.Function):
         # assert use_causal != use_mask, f"use causal {use_causal=} and {use_mask=} are mutually exclusive"
 
         # block tuning
-        block_m = 64 # 128 
-        block_n = 32 
+        block_m = 128 # 128 
+        block_n = 64 
         print(f"block sizes: {block_m=}, {block_n=}")
 
         output = torch.empty_like(q)
