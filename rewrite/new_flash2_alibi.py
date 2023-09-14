@@ -92,11 +92,11 @@ def _fwd_kernel(
 
     # credit to: Adam P. Goucher ((https://github.com/apgoucher))
     # scale sm_scale by 1/log_2(e) and use 2^x
-    qk_scale = 0.5 # k_sqrt_scale_factor * 1.44269504
+    qk_scale = k_sqrt_scale_factor * 1.44269504
 
     # q will stay in sram
     q = tl.load(q_bpr)
-    # q = (q * qk_scale).to(k_in.dtype.element_ty)
+    q = (q * qk_scale).to(k_in.dtype.element_ty)
 
     low = 0
     high = (start_m+1)* block_m if use_causal else seq_len
@@ -168,7 +168,7 @@ class _newattention(torch.autograd.Function):
 
         output = torch.empty_like(q)
 
-        k_sqrt_scale_factor = sm_scale # kdim**0.5  
+        k_sqrt_scale_factor = kdim**0.5  
         # triton tuning
         num_warps = 4 if kdim <= 64 else 8
         num_stages = 4

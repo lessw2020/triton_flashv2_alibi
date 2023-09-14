@@ -29,20 +29,21 @@ def test_attention(batch, num_heads, seq_len, dim_head, dtype):
     print(f"{q=}")
     dout = torch.randn_like(q)
 
-    sm_scale = 0.5
+    sm_scale = k.shape[-1]**0.5
+    #sm_scale.to(torch.bfloat16)
 
     tri_out = attention(q,k,v,sm_scale)
     base_out = orig_attn(q,k,v,False, sm_scale)
 
-    print(f"{tri_out[0][0][0][0:5]=}")
-    print(f"{base_out[0][0][0][0:5]=}")
+    print(f"{tri_out[0][0][0][0]=}")
+    print(f"{base_out[0][0][0][0]=}")
 
     # manual
     mha = torch.matmul(q, k.transpose(2,3)) * sm_scale
     mha = torch.softmax(mha.float(), dim=-1).to(dtype)
 
     expected_out = torch.matmul(mha, v)
-    print(f"{expected_out[0][0][0][0:5]=}")
+    print(f"{expected_out[0][0][0][0]=}")
 
 
 
