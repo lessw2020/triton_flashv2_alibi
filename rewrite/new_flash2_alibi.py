@@ -89,6 +89,16 @@ def _fwd_kernel(
         order=(1,0),
     )
 
+    offsets_m = start_m * block_m + tl.arange(0,block_m)
+    offsets_n = tl.arange(0,block_n)
+
+    # init online softmax meta stores
+    max_i = tl.zeros([block_m], dtype=tl.float32)+float("-inf")
+    normalizer_i = tl.zeros([block_m], dtype=tl.float32)
+    accumulator = tl.zeros([block_m, block_head_dim], dtype=tl.float32)
+
+    
+
 
 
 
