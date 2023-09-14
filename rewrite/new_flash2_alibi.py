@@ -108,7 +108,17 @@ def _fwd_kernel(
     low = 0
     high = (start_m+1)* block_m if use_causal else seq_len
 
-    
+    for start_n in range(low, high, block_n):
+        k = tl.load(k_bpr)
+        v = tl.load(v_bpr)
+
+        # attn matrix calculation
+        qk = tl.zeros([block_m, block_n], dtype=tl.float32)
+        qk += tl.dot(q, k, allow_tf32=True)
+
+        # online softmax updates
+        max_i_new = tl.maximum(max_i, tl.max(qk, 1))
+
 
 
 
