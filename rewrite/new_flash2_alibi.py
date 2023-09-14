@@ -118,6 +118,25 @@ def _fwd_kernel(
 
         # online softmax updates
         max_i_new = tl.maximum(max_i, tl.max(qk, 1))
+        alpha = tl.math.exp2(max_i - max_i_new)
+        probs = tl.math.exp2(qk-max_i_new[:,None])
+
+        # scale and update accumulator
+        accumulator *= alpha[:, None]
+        accumulator += tl.dot(probs.to(v_in.dtype.element_ty), v, allow_tf32=True)
+
+        normalizer_i = normalizer_i * alpha + tl.sum(probs,1)
+        max_i = max_i_new
+
+        # move pointers
+        k_bpr = tl.advance(k_bpr, (0, block_n))
+        v_bpr = tl.advance(v_bpr, (block_n, 0))
+
+    accumulator = accumulator / normalizer_i[:,None]
+    normalizer_ptrs = softmax_normalizer + offset_heads * seq_len+ offsets_m
+    tl.store(normalizer_ptrs, max_i + tl.math.log2(normalizer_i))
+
+
 
 
 
