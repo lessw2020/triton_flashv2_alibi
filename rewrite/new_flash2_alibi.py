@@ -175,12 +175,12 @@ class _newattention(torch.autograd.Function):
         assert kdim in _supported_head_dims
         assert 4 == q.dim()
         # currently support only mask or only causal (mask should include causal)
-        if use_causal:
+        '''if use_causal:
             assert use_causal != use_mask, f"causal {use_causal=} and {use_mask=} are mutually exclusive"
         elif use_mask:
             assert use_mask != use_causal, f"using casual and mask together is not yet supported"
             assert mask_in is not None, f" use_mask set but no mask supplied in mask_in param"
-        
+        '''
         # block tuning
         block_m = 64 # 128 
         block_n = 32 

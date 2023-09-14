@@ -33,7 +33,7 @@ def test_attention(batch, num_heads, seq_len, dim_head, dtype):
 
     dout = torch.randn_like(q)
 
-    use_causal = False
+    use_causal = True
     use_mask = True
 
     if use_mask:
