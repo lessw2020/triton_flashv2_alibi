@@ -78,7 +78,7 @@ def _fwd_kernel(
         shape = (seq_len, block_head_dim),
         strides = (v_stride_sq, v_stride_hd),
         offsets = (0,0),
-        block_shape=(seq_len, block_head_dim),
+        block_shape=(block_n, block_head_dim),
         order=(1,0),
     )
 
