@@ -6,7 +6,7 @@ import time
 from torch.nn.functional import  scaled_dot_product_attention as flash_sdpa
 from new_flash2_alibi import new_flash2 as attention
 from base_flash2 import attention as orig_attn
-@pytest.mark.parametrize("batch, num_heads, seq_len, dim_head", [(2, 64, 2048, 32 ),#
+@pytest.mark.parametrize("batch, num_heads, seq_len, dim_head", [(2, 64, 4096, 64 ),#
                                                                  #(2, 48, 512, 16),
         # (4, 48, 1024, 32),
         # (4, 48, 1024, 64),
@@ -45,6 +45,8 @@ def test_attention(batch, num_heads, seq_len, dim_head, dtype):
     #sm_scale.to(torch.bfloat16)
     start = time.perf_counter()
     # params = q k v scaling use_causal
+    # for i in range(0,1000):
+
     tri_out = attention(q,k,v,None, use_causal, use_mask, mask) # qk_scale)
     stop = time.perf_counter()
     triton_time = round(stop-start, 4)
