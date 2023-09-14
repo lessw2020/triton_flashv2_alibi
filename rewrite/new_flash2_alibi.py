@@ -21,6 +21,7 @@ def _fwd_kernel(
     softmax_normalizer: torch.tensor, 
     use_causal: tl.constexpr,
     use_mask: tl.constexpr, #: bool, 
+    mask_in: torch.tensor,
 
     # strides
     q_stride_z,
@@ -146,7 +147,7 @@ def _fwd_kernel(
 
 class _newattention(torch.autograd.Function):
     @staticmethod
-    def forward(ctx, q, k, v, qk_scaling=None, use_causal=False, use_mask = False):
+    def forward(ctx, q, k, v, qk_scaling=None, use_causal=False, use_mask = False, mask_in: torch.Tensor = None):
         qdim, kdim, vdim = q.shape[-1], k.shape[-1], v.shape[-1]
         print(f"{qdim=}")
         # confirm suitable qkv shapes
@@ -154,11 +155,15 @@ class _newattention(torch.autograd.Function):
         assert kdim in _supported_head_dims
 
         # currently support only mask or only causal (mask should include causal)
-        # assert use_causal != use_mask, f"use causal {use_causal=} and {use_mask=} are mutually exclusive"
-
+        if use_causal:
+            assert use_causal != use_mask, f"use causal {use_causal=} and {use_mask=} are mutually exclusive"
+        elif use_mask:
+            assert use_mask != use_causal, f"using casual and mask together is not yet supported"
+            assert mask_in is not None, f" use_mask set but no mask supplied in mask_in param"
+        
         # block tuning
-        block_m = 128 # 128 
-        block_n = 64 
+        block_m = 64 # 128 
+        block_n = 32 
         print(f"block sizes: {block_m=}, {block_n=}")
 
         output = torch.empty_like(q)
@@ -186,6 +191,7 @@ class _newattention(torch.autograd.Function):
                           softmax_normalizer,
                           use_causal, #=use_causal,
                           use_mask, #=use_mask,
+                          mask_in, 
                           # 4d strides,
                           q.stride(0), # batch
                           q.stride(1), # num heads
