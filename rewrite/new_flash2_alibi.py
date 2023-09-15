@@ -203,10 +203,11 @@ def _bwd_kernel( q, k, v,
             num_heads, # H
             seq_len, 
             block_m: tl.constexpr,
-            block_headdim: tl.constexpr,
             block_n: tl.constexpr,
+            block_headdim: tl.constexpr,
             use_causal: tl.constexpr,
             use_mask: tl.constexpr,
+            use_sequence_parallel: tl.constexpr,
 
 
             ):
@@ -214,6 +215,14 @@ def _bwd_kernel( q, k, v,
     offset_headbatch = tl.program_id(0)
     offset_z = offset_headbatch // num_heads
     offset_h = offset_headbatch % num_heads
+
+    q += offset_z * q_stride_z + offset_h * q_stride_h
+    k += offset_z * k_stride_z + offset_h * k_stride_h
+    v += offset_z * v_stride_z + offset_h * v_stride_h
+
+    if use_mask:
+        mask += offset_z * mask_stride_z + offset_h * mask_stride_h
+    
 
 
     
@@ -338,8 +347,8 @@ class _newattention(torch.autograd.Function):
         do = do.contiguous()
         
         # seq parallel TODO
-        seq_parallel=False
-        if seq_parallel:
+        use_seq_parallel=False
+        if use_seq_parallel:
             raise ValueError("seq parallel not implemented yet")
         else:
             dq = torch.zeros_like(q, dtype=torch.float32)
@@ -364,7 +373,7 @@ class _newattention(torch.autograd.Function):
         )
 
         seq_len_kv = k.shape[2]
-        bwd_grid = (grid_n, 1) if not seq_parallel else (grid_n, cdiv(seq_len_kv, block_size))
+        bwd_grid = (grid_n, 1) if not use_seq_parallel else (grid_n, cdiv(seq_len_kv, block_size))
         
         _bwd_kernel[bwd_grid](
             q, k, v,
@@ -400,6 +409,7 @@ class _newattention(torch.autograd.Function):
             # SEQUENCE_PARALLEL=sequence_parallel,
             use_causal=ctx.use_causal,
             use_mask=ctx.use_mask,
+            use_sequence_parallel = use_seq_parallel,
             num_warps=8,
             num_stages=1,
 
