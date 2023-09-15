@@ -298,8 +298,24 @@ def _bwd_kernel_one_col_block(
             use_causal: tl.constexpr,
             use_mask: tl.constexpr,
             use_sequence_parallel: tl.constexpr,
-            )
-    pass
+            ):
+    """ process single block in a column order """
+    low = 0
+    if use_causal:
+        low = start_n + block_m
+
+    if use_sequence_parallel:
+        dq += stride_dqa.to(tl.int64)* start_n
+    
+    # rc offsets
+    offsets_qm = low + tl.arange(0,block_m)
+    offsets_n = start_n * block_m + tl.arange(0,block_m)
+
+    offsets_m = tl.arange(0,block_n)
+    offsets_k = tl.arange(0, block_headdim)
+
+    
+    
     
 
 class _newattention(torch.autograd.Function):
