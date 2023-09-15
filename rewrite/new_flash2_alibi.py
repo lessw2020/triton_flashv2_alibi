@@ -211,7 +211,7 @@ def _bwd_kernel( q, k, v,
 
 
             ):
-    qk_scale = qk_scaling * 1.44269504
+    refined_qk_scale = qk_scaling * 1.44269504
     offset_headbatch = tl.program_id(0)
     offset_z = offset_headbatch // num_heads
     offset_h = offset_headbatch % num_heads
@@ -229,10 +229,77 @@ def _bwd_kernel( q, k, v,
     dk += offset_z * k_stride_z + offset_h * k_stride_h
     dv += offset_z * v_stride_z + offset_h * v_stride_h
 
+    num_block_n = tl.cdiv(seq_len, block_n)
+    if not use_sequence_parallel:
+        for start_n in range(0, num_block_n):
+            _bwd_kernel_one_col_block(
+                q, k, v,
+            qk_scaling,  # sm_scale
+            refined_qk_scale,
+            mask,
+            output, do,
+            dq, dk, dv,
+            softmax_normalizer, # L
+            delta, #D 
+            stride_dqa, # d of q alpha 
+            q_stride_z, q_stride_h, 
+            q_stride_sqlen, q_stride_hdim,
+            k_stride_z, k_stride_h,
+            k_stride_sqlen, k_stride_hdim,
+            v_stride_z, v_stride_h,
+            v_stride_sqlen, v_stride_hdim,
+            mask_stride_z, mask_stride_h,
+            mask_stride_sqlen, mask_stride_hdim,
+            num_heads, # H
+            seq_len, 
+            offset_h,
+            start_n,
+            num_block_n,
+            block_m,
+            block_n,
+            block_headdim,
+            use_causal,
+            use_mask,
+            use_sequence_parallel,
+            )
+    
+    else:
+        raise ValueError("seq parallel not impl yet")
     
 
 
-
+@jit
+def _bwd_kernel_one_col_block(
+                q, k, v,
+            qk_scaling,  # sm_scale
+            refined_qk_scale,
+            mask,
+            output, do,
+            dq, dk, dv,
+            softmax_normalizer, # L
+            delta, #D 
+            stride_dqa, # d of q alpha 
+            q_stride_z, q_stride_h, 
+            q_stride_sqlen, q_stride_hdim,
+            k_stride_z, k_stride_h,
+            k_stride_sqlen, k_stride_hdim,
+            v_stride_z, v_stride_h,
+            v_stride_sqlen, v_stride_hdim,
+            mask_stride_z, mask_stride_h,
+            mask_stride_sqlen, mask_stride_hdim,
+            num_heads, # H
+            seq_len, 
+            offset_h,
+            start_n,
+            num_block_n,
+            block_m: tl.constexpr,
+            block_n: tl.constexpr,
+            block_headdim: tl.constexpr,
+            use_causal: tl.constexpr,
+            use_mask: tl.constexpr,
+            use_sequence_parallel: tl.constexpr,
+            )
+    pass
     
 
 class _newattention(torch.autograd.Function):

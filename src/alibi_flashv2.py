@@ -380,7 +380,7 @@ def _bwd_kernel(
                 Z,
                 H,
                 N_CTX,
-                off_hz,
+                off_hz, #
                 start_n,
                 num_block_n,
                 BLOCK_M=BLOCK_M,
