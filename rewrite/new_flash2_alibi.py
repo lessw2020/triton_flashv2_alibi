@@ -165,7 +165,7 @@ def _fwd_kernel(
     tl.store(output_bpr, accumulator.to(k_in.dtype.element_ty))
 
 @jit
-def bwd_preprocess(output_in,
+def _bwd_preprocess(output_in,
                     do_in,
                     delta_in,
                     block_m: tl.constexpr,
@@ -182,9 +182,31 @@ def bwd_preprocess(output_in,
 
     delta = tl.sum(outs * do, axis=1)
     tl.store(delta_in + offsets_m, delta)
+    
+@jit
+def _bwd_kernel( q, k, v,
+            qk_scaling,  # sm_scale
+            mask,
+            output, do,
+            dq, dk, dv,
+            softmax_normalizer, # L
+            delta, #D 
+            stride_dqa, # d of q alpha 
+            q_stride_z, q_stride_h, 
+            q_stride_sqlen, q_stride_hdim,
+            k_stride_z, k_stride_h,
+            k_stride_sqlen, k_stride_hdim,
+            v_stride_z, v_stride_h,
+            v_stride_sqlen, v_stride_hdim,
+            mask_stride_z, mask_stride_h,
+            mask_stride_sqlen, mask_stride_hdim,
 
-def _bwd_kernel():
+
+
+
+            ):
     pass
+    
 
 class _newattention(torch.autograd.Function):
     @staticmethod
@@ -301,7 +323,10 @@ class _newattention(torch.autograd.Function):
         q, k, v, mask, output, softmax_normalizer = unpack
         
         grid = ctx.grid
+        grid_n = grid[1]
 
+        do = do.contiguous()
+        
         # seq parallel TODO
         seq_parallel=False
         if seq_parallel:
@@ -318,9 +343,9 @@ class _newattention(torch.autograd.Function):
             mask_strides = (None,)*4
         
         seq_len = q.shape[2]
-        preprocess_grid = (cdiv(seq_len, block_size) * grid[1],)
+        preprocess_grid = (cdiv(seq_len, block_size) * grid_n,)
 
-        bwd_preprocess[preprocess_grid](
+        _bwd_preprocess[preprocess_grid](
             output,
             do,
             delta,
@@ -328,7 +353,38 @@ class _newattention(torch.autograd.Function):
             dim_head=ctx.head_dim,
         )
 
-        _bwd_kernel()
+        seq_len_kv = k.shape[2]
+        bwd_grid = (grid_n, 1) if not seq_parallel else (grid_n, cdiv(seq_len_kv, block_size))
+        
+        _bwd_kernel[bwd_grid](
+            q, k, v,
+            ctx.qk_scaling,
+            mask,
+            output,
+            do,
+            dq,
+            dk,
+            dv,
+            softmax_normalizer,
+            delta,
+            output.numel(),
+            # strides
+            q.stride(0),
+            q.stride(1),
+            q.stride(2),
+            q.stride(3),
+            k.stride(0),
+            k.stride(1),
+            k.stride(2),
+            k.stride(3),
+            v.stride(0),
+            v.stride(1),
+            v.stride(2),
+            v.stride(3),
+            *mask_strides,
+
+
+        )
         # dummy vals
         dq = dk = dv = torch.ones_like(do)
         return dq, dk, dv, None, None, None, None
