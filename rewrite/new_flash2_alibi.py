@@ -165,9 +165,26 @@ def _fwd_kernel(
     tl.store(output_bpr, accumulator.to(k_in.dtype.element_ty))
 
 @jit
-def bwd_preprocess(output, do):
-    pass
+def bwd_preprocess(output_in,
+                    do_in,
+                    delta_in,
+                    block_m: tl.constexpr,
+                    dim_head: tl.constexpr,
+                    ):
+    offsets_m = tl.program_id(0) * block_m + tl.arange(0,block_m)
+    offsets_n = tl.arange(0,dim_head)
 
+    outs = tl.load(output_in + offsets_m[:,None] * dim_head + offsets_n[None,:])
+    outs.to(tl.float32)
+
+    do = tl.load(do_in + offsets_m[:,None] * dim_head + offsets_n[None,:])
+    do.to(tl.float32)
+
+    delta = tl.sum(outs * do, axis=1)
+    tl.store(delta_in + offsets_m, delta)
+
+def _bwd_kernel():
+    pass
 
 class _newattention(torch.autograd.Function):
     @staticmethod
@@ -306,7 +323,12 @@ class _newattention(torch.autograd.Function):
         bwd_preprocess[preprocess_grid](
             output,
             do,
+            delta,
+            block_m=block_size,
+            dim_head=ctx.head_dim,
         )
+
+        _bwd_kernel()
         # dummy vals
         dq = dk = dv = torch.ones_like(do)
         return dq, dk, dv, None, None, None, None
