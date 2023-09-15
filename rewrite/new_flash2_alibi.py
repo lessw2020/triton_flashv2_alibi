@@ -200,12 +200,22 @@ def _bwd_kernel( q, k, v,
             v_stride_sqlen, v_stride_hdim,
             mask_stride_z, mask_stride_h,
             mask_stride_sqlen, mask_stride_hdim,
-
-
+            num_heads, # H
+            seq_len, 
+            block_m: tl.constexpr,
+            block_headdim: tl.constexpr,
+            block_n: tl.constexpr,
+            use_causal: tl.constexpr,
+            use_mask: tl.constexpr,
 
 
             ):
-    pass
+    qk_scale = qk_scaling * 1.44269504
+    offset_headbatch = tl.program_id(0)
+    offset_z = offset_headbatch // num_heads
+    offset_h = offset_headbatch % num_heads
+
+
     
 
 class _newattention(torch.autograd.Function):
@@ -308,7 +318,7 @@ class _newattention(torch.autograd.Function):
     
     @staticmethod
     def backward(ctx, do):
-        block_size = 128 
+        block_size = 64 # 128 
         print(f"in backward -- saved tensors:")
         unpack = ctx.saved_tensors
         # for item in unpack:
@@ -382,6 +392,16 @@ class _newattention(torch.autograd.Function):
             v.stride(2),
             v.stride(3),
             *mask_strides,
+            q.shape[1],
+            q.shape[2],
+            block_m=block_size,
+            block_n=block_size,
+            block_headdim=ctx.head_dim,
+            # SEQUENCE_PARALLEL=sequence_parallel,
+            use_causal=ctx.use_causal,
+            use_mask=ctx.use_mask,
+            num_warps=8,
+            num_stages=1,
 
 
         )
