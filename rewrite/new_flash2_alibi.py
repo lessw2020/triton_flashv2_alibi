@@ -314,7 +314,13 @@ def _bwd_kernel_one_col_block(
     offsets_m = tl.arange(0,block_n)
     offsets_k = tl.arange(0, block_headdim)
 
-    
+    # init ptrs
+    q_ptrs = q + (offsets_qm[:,None]* q_stride_sqlen+offsets_k[None,:]* q_stride_hdim)
+    k_ptrs = k + (offsets_n[:,None] * k_stride_sqlen + offsets_k[None,:]* k_stride_hdim  )
+    v_ptrs = v + (offsets_n[:,None] * v_stride_sqlen + offsets_k[None,:] * v_stride_hdim)
+
+    if use_mask:
+        mask_ptrs = mask + (offsets_qm[:,None] * mask_stride_sqlen + offsets_n[None,:] * mask_stride_hdim)
     
     
 
