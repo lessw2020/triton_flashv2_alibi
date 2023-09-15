@@ -223,6 +223,14 @@ def _bwd_kernel( q, k, v,
     if use_mask:
         mask += offset_z * mask_stride_z + offset_h * mask_stride_h
     
+    # derivative offsets
+    do += offset_z * q_stride_z + offset_h * q_stride_h
+    dq += offset_z * q_stride_z + offset_h * q_stride_h
+    dk += offset_z * k_stride_z + offset_h * k_stride_h
+    dv += offset_z * v_stride_z + offset_h * v_stride_h
+
+    
+
 
 
     
