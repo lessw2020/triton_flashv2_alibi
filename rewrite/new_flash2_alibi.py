@@ -439,6 +439,7 @@ class _newattention(torch.autograd.Function):
             mask = mask.expand(q0, q1, q2, k.shape[2])
             mask_strides = mask.stride()
         else:
+            mask=None
             mask_strides = (None,)*4
 
         _fwd_kernel[grid](q, k, v, 

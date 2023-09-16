@@ -14,7 +14,7 @@ from base_flash2 import attention as orig_attn
 @pytest.mark.parametrize("dtype",[torch.bfloat16])
 
 
-def test_attention(batch, num_heads, seq_len, dim_head, dtype):
+def test_fwd_attention(batch, num_heads, seq_len, dim_head, dtype):
     torch.manual_seed(2020)
 
     def make_qkv(batch, num_heads, seq_len, dim_head, dtype):
@@ -83,10 +83,96 @@ def test_attention(batch, num_heads, seq_len, dim_head, dtype):
 
 
     # ====== backward ===============
-    tri_out.backward(dout)
+    #tri_out.backward(dout)
+    #base_out.backward(dout)
+    #sdpa_out.backwar
 
     # derivatives
-    tri_dv = v.grad.clone()
-    tri_dk = k.grad.clone()
-    tri_dq = q.grad.clone()
+    #tri_dv = v.grad.clone()
+    #tri_dk = k.grad.clone()
+    #tri_dq = q.grad.clone()
     # print(f"{tri_dv=}")
+@pytest.mark.parametrize("batch, num_heads, seq_len, dim_head", [(2, 64, 4096, 64 ),#
+                                                                 #(2, 48, 512, 16),
+        # (4, 48, 1024, 32),
+        # (4, 48, 1024, 64),
+    ],)  #  (4, 48, 1024, 128)]])
+@pytest.mark.parametrize("dtype",[torch.bfloat16])
+
+def test_bwd_attention(batch, num_heads, seq_len, dim_head, dtype):
+    torch.manual_seed(2020)
+
+    def make_qkv(batch, num_heads, seq_len, dim_head, dtype):
+        """produces consistent qkv's"""
+        res = torch.empty((batch, num_heads, seq_len, dim_head), dtype=dtype, device="cuda")
+        res.normal_(mean=0.0, std=0.5)
+        res.requires_grad_()
+        return res
+
+
+    q = make_qkv(batch, num_heads, seq_len, dim_head, dtype)
+    k = make_qkv(batch, num_heads, seq_len, dim_head, dtype)
+    v = make_qkv(batch, num_heads, seq_len, dim_head, dtype)
+
+    assert id(q) != id(k)  
+
+    dout = torch.randn_like(q)
+
+    use_causal = True
+    use_mask = False
+
+    if use_mask:
+        mask = torch.ones((seq_len, seq_len), device=q.device, dtype=q.dtype)
+    else:
+        mask = None
+
+    qk_scale = k.shape[-1]**0.5
+    
+    
+    # params = q k v scaling use_causal
+    # for i in range(0,1000):
+
+    # run testing impl fwd then bwd
+    tri_out = attention(q,k,v,None, use_causal, use_mask, mask) # qk_scale)
+    
+    start = time.perf_counter()
+    tri_out.backward(dout)
+    stop = time.perf_counter()
+    triton_time = round(stop-start, 4)
+    print(f"triton bwd compute time = {triton_time}")
+    
+    tri_dv = v.grad.clone().detach()
+    tri_dq = q.grad.clone().detach()
+    tri_dk = k.grad.clone().detach()
+    v.grad, q.grad, k.grad = None, None, None
+
+    # params: q,k,v,causal,sm_scale,
+        # mask: torch.Tensor = None,
+        # sequence_parallel=False,
+    base_out = orig_attn(q,k,v,use_causal, qk_scale, mask)
+
+    start = time.perf_counter()
+    base_out.backward(dout)
+    stop = time.perf_counter()
+    triton_time = round(stop-start, 4)
+    print(f"triton bwd compute time = {triton_time}")
+    
+    base_dv = v.grad.clone().detach()
+    base_dq = q.grad.clone().detach()
+    base_dk = k.grad.clone().detach()
+    v.grad, q.grad, k.grad = None, None, None
+
+    # compare gradients
+    torch.testing.assert_close(base_dv, tri_dv,rtol=0, atol=1e-2 )
+    torch.testing.assert_close(base_dq, tri_dq,rtol=0, atol=1e-2 )
+    torch.testing.assert_close(base_dk, tri_dk,rtol=0, atol=1e-2 )
+    
+    print(f"{tri_dq[0][0][0]=}")
+    print(f"{base_dq[0][0][0]=}")
+
+
+
+
+
+    
+    
