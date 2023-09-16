@@ -586,8 +586,7 @@ class _newattention(torch.autograd.Function):
 
 
         )
-        # dummy vals
-        dq = dk = dv = torch.ones_like(do)
+    
         return dq, dk, dv, None, None, None, None
 
 new_flash2 = _newattention.apply
