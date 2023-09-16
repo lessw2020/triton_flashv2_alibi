@@ -496,7 +496,7 @@ class _newattention(torch.autograd.Function):
     
     @staticmethod
     def backward(ctx, do):
-        block_size = 64 
+        block_size = 32 
         do = do.contiguous()
 
         print(f"in backward -- saved tensors:")
