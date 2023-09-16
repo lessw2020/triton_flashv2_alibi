@@ -491,7 +491,7 @@ class _newattention(torch.autograd.Function):
     
     @staticmethod
     def backward(ctx, do):
-        block_size = 64 # 128 
+        block_size = 128 
         print(f"in backward -- saved tensors:")
         unpack = ctx.saved_tensors
         # for item in unpack:
