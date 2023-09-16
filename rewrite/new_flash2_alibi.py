@@ -496,7 +496,7 @@ class _newattention(torch.autograd.Function):
     
     @staticmethod
     def backward(ctx, do):
-        block_size = 128 
+        block_size = 64 
         do = do.contiguous()
 
         print(f"in backward -- saved tensors:")
@@ -587,7 +587,7 @@ class _newattention(torch.autograd.Function):
 
         )
     
-        return dq, dk, dv, None, None, None, None
+        return dq, dk, dv, None, None, None, None, None, None
 
 new_flash2 = _newattention.apply
 
