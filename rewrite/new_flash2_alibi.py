@@ -341,11 +341,12 @@ def _bwd_kernel_one_col_block(
     
         # recompute p = softmax(qk, dim=-1).T 
         # do is already pre-divided by normalizer
-
-        #if use_causal:
-        #    qk = tl.where(offsets_current_m[:,None] >= offsets_n[None,:]), float(0.0), float("-inf")
-        #else:
         qk = tl.zeros([block_m, block_n], dtype=tl.float32)
+    
+        if use_causal:
+            qk = tl.where(
+                offsets_current_m[:,None] >= (offsets_n[None,:]), qk, float("-inf")
+            )
         qk += tl.dot(q, tl.trans(k))
         qk *= refined_qk_scale
     
