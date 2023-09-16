@@ -270,14 +270,14 @@ def _bwd_kernel( q, k, v,
 
 @jit
 def _bwd_kernel_one_col_block(
-                q, k, v,
+                q_in, k_in, v_in,
             qk_scaling,  # sm_scale
             refined_qk_scale,
-            mask,
-            output, do,
-            dq, dk, dv,
+            mask_in,
+            output, do_in,
+            dq_in, dk_in, dv_in,
             softmax_normalizer, # L
-            delta, #D 
+            delta_in, #D 
             stride_dqa, # d of q alpha 
             q_stride_z, q_stride_h, 
             q_stride_sqlen, q_stride_hdim,
@@ -305,7 +305,7 @@ def _bwd_kernel_one_col_block(
         low = start_n + block_m
 
     if use_sequence_parallel:
-        dq += stride_dqa.to(tl.int64)* start_n
+        dq_in += stride_dqa.to(tl.int64)* start_n
     
     # rc offsets
     offsets_qm = low + tl.arange(0,block_m)
@@ -315,14 +315,79 @@ def _bwd_kernel_one_col_block(
     offsets_k = tl.arange(0, block_headdim)
 
     # init ptrs
-    q_ptrs = q + (offsets_qm[:,None]* q_stride_sqlen+offsets_k[None,:]* q_stride_hdim)
-    k_ptrs = k + (offsets_n[:,None] * k_stride_sqlen + offsets_k[None,:]* k_stride_hdim  )
-    v_ptrs = v + (offsets_n[:,None] * v_stride_sqlen + offsets_k[None,:] * v_stride_hdim)
+    q_ptrs = q_in + (offsets_qm[:,None]* q_stride_sqlen+offsets_k[None,:]* q_stride_hdim)
+    k_ptrs = k_in + (offsets_n[:,None] * k_stride_sqlen + offsets_k[None,:]* k_stride_hdim  )
+    v_ptrs = v_in + (offsets_n[:,None] * v_stride_sqlen + offsets_k[None,:] * v_stride_hdim)
 
     if use_mask:
-        mask_ptrs = mask + (offsets_qm[:,None] * mask_stride_sqlen + offsets_n[None,:] * mask_stride_hdim)
+        mask_ptrs = mask_in + (offsets_qm[:,None] * mask_stride_sqlen + offsets_n[None,:] * mask_stride_hdim)
     
+    do_ptrs = do_in + (offsets_qm[:,None] * q_stride_sqlen + offsets_k[None, :]* q_stride_hdim)
+    dq_ptrs = dq_in + (offsets_qm[:,None] * q_stride_sqlen + offsets_k[None,:] * q_stride_hdim)
+    # row-wise metadata
+    delta_ptrs = delta_in + offset_h * seq_len
+    softmax_normalizer_ptrs = softmax_normalizer + offset_h * seq_len
+
+    dv = tl.zeros([block_m, block_headdim], dtype=tl.float32)
+    dk = tl.zeros([block_m, block_headdim], dtype = tl.float32)
+
+    k = tl.load(k_ptrs)
+    v = tl.load(v_ptrs)
     
+    # row looping
+    for start_m in range(low, num_block_n * block_m, block_m):
+        offsets_current_m = start_m + offsets_m
+        q = tl.load(q_ptrs)
+    
+        # recompute p = softmax(qk, dim=-1).T 
+        # do is already pre-divided by normalizer
+
+        #if use_causal:
+        #    qk = tl.where(offsets_current_m[:,None] >= offsets_n[None,:]), float(0.0), float("-inf")
+        #else:
+        qk = tl.zeros([block_m, block_n], dtype=tl.float32)
+        qk += tl.dot(q, tl.trans(k))
+        qk *= refined_qk_scale
+    
+        if use_mask:
+            mask = tl.load(mask_ptrs)
+            qk += mask.to(qk.dtype)
+        normalizer_i = tl.load(softmax_normalizer_ptrs + offsets_current_m)
+        p = tl.math.exp2(qk-normalizer_i[:,None])
+
+        do = tl.load(do_ptrs)
+        dv += tl.dot(tl.trans(p.to(q_in.dtype.element_ty)), do, allow_tf32=True)
+
+        delta_i = tl.load(delta_ptrs + offsets_current_m)
+
+        dp = tl.dot(do, tl.trans(v), allow_tf32=True)
+        ds = (p * (dp - dp-delta_i[:,None]) * qk_scaling).to(q_in.dtype.element_ty)
+
+        # dk = dot(ds.T, q)
+        dk += tl.dot(tl.trans(ds), q, allow_tf32=True)
+
+        # dq
+        if not use_sequence_parallel:
+            dq = tl.load(dq_ptrs)
+            dq += tl.dot(ds, k, allow_tf32=True)
+            
+        elif use_sequence_parallel:
+            dq = tl.trans(tl.dot(tl.trans(k), tl.trans(ds), allow_tf32=True))
+        
+        tl.store(dq_ptrs, dq)
+
+        # move pointers
+        dq_ptrs += block_m * q_stride_sqlen
+        q_ptrs += block_m * q_stride_sqlen
+        do_ptrs += block_m * q_stride_sqlen
+        if use_mask:
+            mask_ptrs += block_m * mask_stride_sqlen
+    dv_ptrs = dv_in + (offsets_n[:,None] * v_stride_sqlen + offsets_k[None, :] * v_stride_hdim)
+    dk_ptrs = dk_in + (offsets_n[:, None] * k_stride_sqlen + offsets_k[None,:]* k_stride_hdim)
+    tl.store(dv_ptrs, dv)
+    tl.store(dk_ptrs, dk)
+    
+
 
 class _newattention(torch.autograd.Function):
     @staticmethod
