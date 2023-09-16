@@ -392,7 +392,11 @@ def _bwd_kernel_one_col_block(
 
 class _newattention(torch.autograd.Function):
     @staticmethod
-    def forward(ctx, q, k, v, qk_scaling=None, use_causal=False, use_mask = False, mask_in: torch.Tensor = None):
+    def forward(ctx, q, k, v, qk_scaling=None, 
+                use_causal=False, 
+                use_mask = False, 
+                mask_in: torch.Tensor = None,
+                use_sequence_parallel: bool = False):
         qdim, kdim, vdim = q.shape[-1], k.shape[-1], v.shape[-1]
         print(f"{qdim=}")
         # confirm suitable qkv shapes
@@ -486,12 +490,15 @@ class _newattention(torch.autograd.Function):
         ctx.head_dim = kdim
         ctx.use_causal = use_causal
         ctx.use_mask = use_mask
+        ctx.use_sequence_parallel = use_sequence_parallel
 
         return output
     
     @staticmethod
     def backward(ctx, do):
         block_size = 128 
+        do = do.contiguous()
+
         print(f"in backward -- saved tensors:")
         unpack = ctx.saved_tensors
         # for item in unpack:
@@ -508,11 +515,12 @@ class _newattention(torch.autograd.Function):
         grid = ctx.grid
         grid_n = grid[1]
 
-        do = do.contiguous()
+        use_sequence_parallel = ctx.use_sequence_parallel
+        print(f"backward static - {use_sequence_parallel=}")
         
-        # seq parallel TODO
-        use_seq_parallel=False
-        if use_seq_parallel:
+        
+        # seq parallel
+        if use_sequence_parallel:
             raise ValueError("seq parallel not implemented yet")
         else:
             dq = torch.zeros_like(q, dtype=torch.float32)
@@ -537,7 +545,7 @@ class _newattention(torch.autograd.Function):
         )
 
         seq_len_kv = k.shape[2]
-        bwd_grid = (grid_n, 1) if not use_seq_parallel else (grid_n, cdiv(seq_len_kv, block_size))
+        bwd_grid = (grid_n, 1) if not use_sequence_parallel else (grid_n, cdiv(seq_len_kv, block_size))
         
         _bwd_kernel[bwd_grid](
             q, k, v,
@@ -570,10 +578,9 @@ class _newattention(torch.autograd.Function):
             block_m=block_size,
             block_n=block_size,
             block_headdim=ctx.head_dim,
-            # SEQUENCE_PARALLEL=sequence_parallel,
             use_causal=ctx.use_causal,
             use_mask=ctx.use_mask,
-            use_sequence_parallel = use_seq_parallel,
+            use_sequence_parallel = use_sequence_parallel,
             num_warps=8,
             num_stages=1,
 
