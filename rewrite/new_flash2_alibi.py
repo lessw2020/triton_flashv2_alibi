@@ -186,7 +186,7 @@ def _bwd_preprocess(output_in,
 @jit
 def _bwd_kernel( q, k, v,
             qk_scaling,  # sm_scale
-            mask,
+            mask_in,
             output, do,
             dq, dk, dv,
             softmax_normalizer, # L
@@ -216,14 +216,15 @@ def _bwd_kernel( q, k, v,
     offset_z = offset_headbatch // num_heads
     offset_h = offset_headbatch % num_heads
 
+    # offset all ptrs for batch / head
     q += offset_z * q_stride_z + offset_h * q_stride_h
     k += offset_z * k_stride_z + offset_h * k_stride_h
     v += offset_z * v_stride_z + offset_h * v_stride_h
 
     if use_mask:
-        mask += offset_z * mask_stride_z + offset_h * mask_stride_h
+        mask_in += offset_z * mask_stride_z + offset_h * mask_stride_h
     
-    # derivative offsets
+    # offset derivative ptrs
     do += offset_z * q_stride_z + offset_h * q_stride_h
     dq += offset_z * q_stride_z + offset_h * q_stride_h
     dk += offset_z * k_stride_z + offset_h * k_stride_h
@@ -236,7 +237,7 @@ def _bwd_kernel( q, k, v,
                 q, k, v,
             qk_scaling,  # sm_scale
             refined_qk_scale,
-            mask,
+            mask_in,
             output, do,
             dq, dk, dv,
             softmax_normalizer, # L
@@ -264,8 +265,38 @@ def _bwd_kernel( q, k, v,
             )
     
     else:
-        raise ValueError("seq parallel not impl yet")
-    
+        start_n = tl.program_id(1)
+        _bwd_kernel_one_col_block(
+                q, k, v,
+            qk_scaling,  # sm_scale
+            refined_qk_scale,
+            mask_in,
+            output, do,
+            dq, dk, dv,
+            softmax_normalizer, # L
+            delta, #D 
+            stride_dqa, # d of q alpha 
+            q_stride_z, q_stride_h, 
+            q_stride_sqlen, q_stride_hdim,
+            k_stride_z, k_stride_h,
+            k_stride_sqlen, k_stride_hdim,
+            v_stride_z, v_stride_h,
+            v_stride_sqlen, v_stride_hdim,
+            mask_stride_z, mask_stride_h,
+            mask_stride_sqlen, mask_stride_hdim,
+            num_heads, # H
+            seq_len, 
+            offset_h,
+            start_n,
+            num_block_n,
+            block_m,
+            block_n,
+            block_headdim,
+            use_causal,
+            use_mask,
+            use_sequence_parallel,
+            )
+
 
 
 @jit
@@ -552,7 +583,7 @@ class _newattention(torch.autograd.Function):
         bwd_grid = (grid_n, 1) if not use_sequence_parallel else (grid_n, cdiv(seq_len_kv, block_size))
         num_warps = 4 if k.shape[-1] <= 64 else 8
         print(f"{bwd_grid=}, {num_warps=}")
-        
+
         _bwd_kernel[bwd_grid](
             q, k, v,
             ctx.qk_scaling,

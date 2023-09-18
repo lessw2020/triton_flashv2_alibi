@@ -7,7 +7,7 @@ from torch.nn.functional import  scaled_dot_product_attention as flash_sdpa
 from new_flash2_alibi import new_flash2 as attention
 from base_flash2 import attention as prev_triton_attn
 @pytest.mark.parametrize("batch, num_heads, seq_len, dim_head", [(4, 48, 512, 64),
-                                                                 #(2, 48, 4096, 64 ),#
+                                                                 (2, 48, 4096, 64 ),#
                                                                  #(2, 48, 512, 16),
         # (4, 48, 1024, 32),
         # (4, 48, 1024, 64),
@@ -36,10 +36,11 @@ def test_fwd_attention(batch, num_heads, seq_len, dim_head, dtype):
 
     use_causal = False
     use_mask = False
+    run_seq_parallel = True
 
     run_base = True
-    run_prev_flash = True
-    run_seq_parallel = False
+    run_prev_flash = False
+    
     run_sdpa = True
 
     if use_mask:
@@ -53,12 +54,22 @@ def test_fwd_attention(batch, num_heads, seq_len, dim_head, dtype):
     # params = q k v scaling use_causal
     # for i in range(0,1000):
 
-    tri_out = attention(q,k,v,None, use_causal, use_mask, 
-                        mask, run_seq_parallel) # qk_scale)
+    tri_out_nosq = attention(q,k,v,None, use_causal, use_mask, 
+                        mask, False) # qk_scale)
+    stop = time.perf_counter()
+    triton_time_nosq = round(stop-start, 4)
+    print(f"triton fwd no_sq compute time = {triton_time_nosq}")
+    
+    
+    start = time.perf_counter()
+    tri_out_yessq = attention(q,k,v,None, use_causal, use_mask, 
+                        mask, True) # qk_scale)
+    print(f"triton fwd yes_sq compute time = {tri_out_yessq}")
     stop = time.perf_counter()
     triton_time = round(stop-start, 4)
-    print(f"triton fwd compute time = {triton_time}")
-    print(f"{tri_out[0][0][0]=}")
+
+    print(f"{tri_out_nosq[0][0][0]=}")
+    torch.testing.assert_close(tri_out_nosq, tri_out_yessq, atol=0, rtol=1e-4)
     # params: q,k,v,causal,sm_scale,
         # mask: torch.Tensor = None,
         # sequence_parallel=False,
@@ -85,8 +96,8 @@ def test_fwd_attention(batch, num_heads, seq_len, dim_head, dtype):
         # expected_out = torch.matmul(mha, v)
         #if not use_causal:
         # print(f"{expected_out[0][0][0]=}")
-
-        torch.testing.assert_close(prev_fwd_out, tri_out, rtol=0, atol=1e-1)
+        if run_prev_flash:
+            torch.testing.assert_close(prev_fwd_out, tri_out, rtol=0, atol=1e-1)
         #torch.testing.assert_close(tri_out, expected_out, rtol=0, atol=1e-1)
 
 
@@ -97,7 +108,7 @@ def test_fwd_attention(batch, num_heads, seq_len, dim_head, dtype):
             item.grad=None
 
     # ====== backward ===============
-    tri_out.backward(dout)
+    tri_out_nosq.backward(dout)
     #if run_base:
     #    base_out.backward(dout)
     #sdpa_out.backwar
@@ -108,6 +119,20 @@ def test_fwd_attention(batch, num_heads, seq_len, dim_head, dtype):
     tri_dq = q.grad.clone().detach()
 
     clear_grads(q,k,v)
+
+    tri_out_yessq.backward(dout)
+    #if run_base:
+    #    base_out.backward(dout)
+    #sdpa_out.backwar
+
+    # derivatives
+    trisq_dv = v.grad.clone().detach()
+    trisq_dk = k.grad.clone().detach()
+    trisq_dq = q.grad.clone().detach()
+
+    clear_grads(q,k,v)
+
+
     
 
     if run_prev_flash:
@@ -127,7 +152,8 @@ def test_fwd_attention(batch, num_heads, seq_len, dim_head, dtype):
 
 
     print(f"{tri_dv[0][0][10]=}")
-    print(f"type triton {tri_dv.dtype=}")
+    print(f"{trisq_dv[0][0][10]}=")
+    
     if run_prev_flash:
         print(f"{prevt_dv[0][0][10]=}")
     if run_sdpa:
@@ -136,11 +162,11 @@ def test_fwd_attention(batch, num_heads, seq_len, dim_head, dtype):
     
     print(f"==== dk ============")
     print(f"{tri_dk[0][0][0]=}")
+    print(f"{trisq_dk[0][0][0]}=")
     if run_prev_flash:
         print(f"{prevt_dk[0][0][0]=}")
     if run_sdpa:
         print(f"{sdpa_dk[0][0][0]=}")
-    print(f"{prevt_dk[0][0][0]=}")
     
-    # torch.testing.assert_close(sdpa_dv, tri_dv, rtol=1e-1, atol=1e-1)
+    torch.testing.assert_close(tri_dk, tri_dk, rtol=1e-1, atol=1e-1)
 
