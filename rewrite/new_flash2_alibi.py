@@ -515,13 +515,17 @@ class _newattention(torch.autograd.Function):
         grid = ctx.grid
         grid_n = grid[1]
 
+        seq_len = q.shape[2]
+        seq_len_kv = k.shape[2]
+
         use_sequence_parallel = ctx.use_sequence_parallel
-        print(f"backward static - {use_sequence_parallel=}")
         
         
         # seq parallel
         if use_sequence_parallel:
-            raise ValueError("seq parallel not implemented yet")
+            lanes = cdiv(seq_len_kv, block_size)
+            new_dq_shape = (lanes,)+ q.shape
+            dq = torch.zeros(new_dq_shape, device = q.device, dtype=q.dtype)
         else:
             dq = torch.zeros_like(q, dtype=torch.float32)
         dk = torch.empty_like(k)
@@ -533,7 +537,7 @@ class _newattention(torch.autograd.Function):
         else:
             mask_strides = (None,)*4
         
-        seq_len = q.shape[2]
+        
         preprocess_grid = (cdiv(seq_len, block_size) * grid_n,)
 
         _bwd_preprocess[preprocess_grid](
@@ -544,8 +548,10 @@ class _newattention(torch.autograd.Function):
             dim_head=ctx.head_dim,
         )
 
-        seq_len_kv = k.shape[2]
+        
         bwd_grid = (grid_n, 1) if not use_sequence_parallel else (grid_n, cdiv(seq_len_kv, block_size))
+        num_warps = 4 if k.shape[-1] <= 64 else 8
+        print(f"{bwd_grid=}, {num_warps=}")
         
         _bwd_kernel[bwd_grid](
             q, k, v,
@@ -581,7 +587,7 @@ class _newattention(torch.autograd.Function):
             use_causal=ctx.use_causal,
             use_mask=ctx.use_mask,
             use_sequence_parallel = use_sequence_parallel,
-            num_warps=8,
+            num_warps=num_warps,
             num_stages=1,
 
 

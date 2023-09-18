@@ -133,13 +133,14 @@ def test_fwd_attention(batch, num_heads, seq_len, dim_head, dtype):
     if run_sdpa:
         print(f"{sdpa_dv[0][0][10]=}")
         print(f"type sdpa {sdpa_dv.dtype=}")
-    '''
+    
+    print(f"==== dk ============")
     print(f"{tri_dk[0][0][0]=}")
     if run_prev_flash:
         print(f"{prevt_dk[0][0][0]=}")
     if run_sdpa:
         print(f"{sdpa_dk[0][0][0]=}")
-    #print(f"{prevt_dk[0][0][0]=}")
-    '''
+    print(f"{prevt_dk[0][0][0]=}")
+    
     # torch.testing.assert_close(sdpa_dv, tri_dv, rtol=1e-1, atol=1e-1)
 
