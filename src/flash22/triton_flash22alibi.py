@@ -64,7 +64,7 @@ def _fwd_inner(
 
 @triton.jit
 def _attn_fwd(
-    Q,K,V, qk_scale, M, Out, 
+    Q,K,V, sm_scale, M, Out, 
     stride_qz, stride_qh, stride_qm, stride_qk,
     stride_kz, stride_kh, stride_kn, stride_kk,
     stride_vz, stride_vh, stride_vk, stride_vn,
@@ -96,7 +96,128 @@ def _attn_fwd(
 
     )
 
+    V_block_ptr = tl.make_block_ptr(
+        base=V + qkv_offset,
+        shape=(seq_len, block_headdim),
+        strides=(stride_vk, stride_vn), 
+        offsets=(0, 0),
+        block_shape=(block_n, block_headdim),
+        order=(1, 0),
+    )
+
+    K_block_ptr = tl.make_block_ptr(
+        base=K + qkv_offset,
+        shape=(block_headdim, seq_len),
+        strides=(stride_kk, stride_kn), # reversed
+        offsets=(0, 0),
+        block_shape=(block_headdim, block_n),
+        order=(0, 1),
+    )
+
+    O_block_ptr = tl.make_block_ptr(
+        base=Out + qkv_offset,
+        shape=(seq_len, block_headdim),
+        strides=(stride_om, stride_on),
+        offsets=(start_m * block_m, 0),
+        block_shape=(block_m, block_headdim),
+        order=(1, 0),
+    )
+
+    offsets_m = start_m * block_m + tl.arange(0,block_m)
+    offsets_n = tl.arange(0, block_n)
+
+    # init softmax metas and accumulator
+    m_i = tl.zeros([block_m], dtype =tl.float32) - float("inf")
+    l_i = tl.zeros([block_m], dtype=tl.float32)+1.0
+    acc = tl.zeros([block_m, block_headdim], dtype = tl.float32)
+
+    #qk scaling
+    qk_scale = sm_scale  # ??
+    qk_scale *= 1.44269504 # 1/log(2)
+
+    q = tl.load(Q_block_ptr)
+    # stage 1 == off_band
+    if stage & 1:
+        acc, l_i, m_i = _fwd_inner(
+            acc, l_i, m_i, q, 
+            K_block_ptr, V_block_ptr,
+            start_m, qk_scale, 
+            block_m, block_n, block_headdim,
+            1, offsets_m, offsets_n
+        )
+    # barrier hints compiler it can schedule dual loops independently
+    tl.debug_barrier()
+    # stage 2: on_band
+    if stage & 2:
+        acc, l_i, m_i = _fwd_inner(
+            acc, l_i, m_i, q,
+            K_block_ptr, V_block_ptr,
+            start_m, qk_scale,
+            block_m, block_n, block_headdim,
+            2, offsets_m, offsets_n,
+        )
+    # epilogue
+    m_i += tl.math.log2(l_i)
+    acc = acc / l_i[:,None]
+    m_ptrs = M + offset_hz * seq_len + offsets_m
+    tl.store(m_ptrs, m_i)
+    tl.store(O_block_ptr, acc.to(Out.type.element_ty))
+
+empty = torch.empty(128, device="cuda")
+
+class _attention(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, q, k, v, causal, sm_scale):
+        #verify shape
+        qlen, klen, vlen = q.shape[-1], k.shape[-1], v.shape[-1]
+        assert qlen = klen and klen == vlen
+        assert klen in {16, 32, 64, 128}
+        q_batch, q_numheads, q_seqlen, q_headdim = q.shape
+
+        out = torch.empty_like(q)
+        block_m = 128
+        block_n = 64 if klen <=64  else 32
+        num_stages = 4 if klen <=64 else 3
+        num_warps = 4
+        row_chunks = triton.cdiv(q_seqlen, block_m)
+        grid = (row_chunks, q_batch * q_numheads,1)
+
+        M = torch.empty((q_batch, q_numheads, q_seqlen), device=q.device, dtype = torch.float32)
+
+        _attn_fwd[grid](
+            q, k, v, sm_scale, M, out,
+            q.stride(0), q.stride(1), q.stride(2), q.stride(3),
+            k.stride(0), k.stride(1), k.stride(2), k.stride(3),
+            v.stride(0), v.stride(1), v.stride(2), v.stride(3),
+            out.stride(0), out.stride(1), out.stride(2), out.stride(3),
+            q_batch, q_numheads,
+            q_seqlen,
+            block_m,
+            block_n, 
+            klen,
+            stage=3,
+            num_warps=num_warps,
+            num_stages=num_stages,
+
+
+        )
+
+        ctx.save_for_backward(q, k, v, out, M)
+        ctx.grid = grid
+        ctx.sm_scale = sm_scale
+        ctx.block_headdim = klen
+        ctx.causal = causal
+        return out
     
+    @staticmethod
+    def backward(ctx, do):
+        q, k, v, out, M = ctx.saved_tensors
+        print(f"in backward - not implemented yet")
+
+        return None, None, None, None, None
+
+flash22attention = _attention.apply
+
 
 
 
