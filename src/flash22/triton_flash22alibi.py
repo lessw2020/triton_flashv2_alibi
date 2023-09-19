@@ -61,6 +61,42 @@ def _fwd_inner(
         V_block_ptr = tl.advance(V_block_ptr, (block_n,0))
         K_block_ptr = tl.advance(K_block_ptr, (0, block_n))
     return accum, l_i, m_i
-        
+
+@triton.jit
+def _attn_fwd(
+    Q,K,V, qk_scale, M, Out, 
+    stride_qz, stride_qh, stride_qm, stride_qk,
+    stride_kz, stride_kh, stride_kn, stride_kk,
+    stride_vz, stride_vh, stride_vk, stride_vn,
+    stride_oz, stride_oh, stride_om, stride_on,
+    Z, H, 
+    seq_len: tl.constexpr,
+    block_m: tl.constexpr,
+    block_n: tl.constexpr,
+    block_headdim: tl.constexpr,
+    stage: tl.constexpr,
+
+):
+    start_m = tl.program_id(0)
+    offset_hz = tl.program_id(1)
+    offset_z = offset_hz // H
+    offset_h = offset_hz % H
+
+    offset_z.to(tl.int64)
+    offset_h.to(tl.int64)
+
+    qkv_offset = offset_z * stride_qz + offset_h * stride_qh
+
+    Q_block_ptr = tl.make_block_ptr(
+        base = Q + qkv_offset,
+        shape = (seq_len, block_headdim),
+        strides = (stride_qm, stride_qk),
+        offsets = (block_m, block_headdim),
+        order = (1,0),
+
+    )
+
+    
+
 
 
