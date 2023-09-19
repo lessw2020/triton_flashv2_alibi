@@ -443,7 +443,7 @@ class _newattention(torch.autograd.Function):
         '''
         # block tuning
         block_m = 64 # 128 
-        block_n = 32 
+        block_n = 32
         print(f"block sizes: {block_m=}, {block_n=}")
 
         output = torch.empty_like(q)
@@ -527,7 +527,7 @@ class _newattention(torch.autograd.Function):
     
     @staticmethod
     def backward(ctx, do):
-        block_size = 32 
+        block_size = 128 
         do = do.contiguous()
 
         print(f"in backward -- saved tensors:")
