@@ -1,4 +1,20 @@
-# learning the new flash2 impl from Triton team
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+# All rights reserved.
+# This version adds Alibi / Attention mask support
+# builds on:
+
+"""
+Fused Attention
+===============
+
+This is a Triton implementation of the Flash Attention v2 algorithm from Tri Dao (https://tridao.me/publications/flash2/flash2.pdf)
+Credits: OpenAI kernel team
+
+Extra Credits:
+- Original flash attention paper (https://arxiv.org/abs/2205.14135)
+- Rabe and Staats (https://arxiv.org/pdf/2112.05682v2.pdf)
+
+"""
 
 import torch
 import triton
@@ -64,11 +80,12 @@ def _fwd_inner(
 
 @triton.jit
 def _attn_fwd(
-    Q,K,V, sm_scale, M, Out, 
+    Q,K,V, sm_scale, M, Out, mask_in,
     stride_qz, stride_qh, stride_qm, stride_qk,
     stride_kz, stride_kh, stride_kn, stride_kk,
     stride_vz, stride_vh, stride_vk, stride_vn,
     stride_oz, stride_oh, stride_om, stride_on,
+    stride_mz, stride_mh, stride_mm, stride_mn,
     Z, H, 
     seq_len: tl.constexpr,
     block_m: tl.constexpr,
@@ -168,7 +185,7 @@ empty = torch.empty(128, device="cuda")
 
 class _attention(torch.autograd.Function):
     @staticmethod
-    def forward(ctx, q, k, v, causal, sm_scale):
+    def forward(ctx, q, k, v, causal, sm_scale, attn_mask=None):
         #verify shape
         qlen, klen, vlen = q.shape[-1], k.shape[-1], v.shape[-1]
         assert qlen == klen and klen == vlen
@@ -184,13 +201,25 @@ class _attention(torch.autograd.Function):
         grid = (row_chunks, q_batch * q_numheads,1)
 
         M = torch.empty((q_batch, q_numheads, q_seqlen), device=q.device, dtype = torch.float32)
+        use_mask = attn_mask is not None
+        if use_mask:
+            assert isinstance(attn_mask, (torch.Tensor,)) and 1 <= attn_mask.dim() <=4
+            extra_dims = 4 - attn_mask.dim()
+            mask_shape = (1,) * extra_dims + attn_mask.shape[:-1] + (k.shape[2],)
+            mask = attn_mask.view(*mask_shape).expand_as(k)
+            mask_strides = mask.stride()
+        else:
+            mask=None
+            mask_strides = (None,)*4
 
         _attn_fwd[grid](
-            q, k, v, sm_scale, M, out,
+            q, k, v, sm_scale, M, out, mask,
             q.stride(0), q.stride(1), q.stride(2), q.stride(3),
             k.stride(0), k.stride(1), k.stride(2), k.stride(3),
             v.stride(0), v.stride(1), v.stride(2), v.stride(3),
             out.stride(0), out.stride(1), out.stride(2), out.stride(3),
+            mask_strides[0], mask_strides[1], 
+            mask_strides[2], mask_strides[3],
             q_batch, q_numheads,
             q_seqlen,
             block_m,
