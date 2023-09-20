@@ -92,6 +92,7 @@ def _attn_fwd(
         shape = (seq_len, block_headdim),
         strides = (stride_qm, stride_qk),
         offsets = (block_m, block_headdim),
+        block_shape=(block_m, block_headdim),
         order = (1,0),
 
     )
@@ -132,8 +133,8 @@ def _attn_fwd(
     acc = tl.zeros([block_m, block_headdim], dtype = tl.float32)
 
     #qk scaling
-    qk_scale = sm_scale  # ??
-    qk_scale *= 1.44269504 # 1/log(2)
+    # qk_scale = sm_scale   # ??
+    qk_scale = sm_scale * 1.44269504 # 1/log(2)
 
     q = tl.load(Q_block_ptr)
     # stage 1 == off_band
@@ -170,7 +171,7 @@ class _attention(torch.autograd.Function):
     def forward(ctx, q, k, v, causal, sm_scale):
         #verify shape
         qlen, klen, vlen = q.shape[-1], k.shape[-1], v.shape[-1]
-        assert qlen = klen and klen == vlen
+        assert qlen == klen and klen == vlen
         assert klen in {16, 32, 64, 128}
         q_batch, q_numheads, q_seqlen, q_headdim = q.shape
 
